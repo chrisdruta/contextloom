@@ -1,0 +1,8 @@
+---
+description: TS rules
+globs:
+  - "**/*.ts"
+  - "**/*.tsx"
+---
+
+List-form globs.

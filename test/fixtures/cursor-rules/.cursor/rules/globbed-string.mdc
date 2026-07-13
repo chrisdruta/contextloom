@@ -1,0 +1,5 @@
+---
+globs: *.ts, src/**/*.tsx
+---
+
+Comma-string globs with unquoted star (invalid YAML alias).

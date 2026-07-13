@@ -2,6 +2,7 @@ import picomatch from "picomatch";
 import type { ResolvedSettings } from "../settings/schema";
 import type { FileSnapshot, ParseResult } from "../shared/types";
 import { ClaudeDirectoryParser } from "./claude-dir";
+import { CursorRulesParser } from "./cursor";
 import { InstructionFileParser } from "./instruction";
 import { MarkdownParser } from "./markdown";
 import type { ContextParser, ParseContext } from "./types";
@@ -14,6 +15,7 @@ export class ParserRegistry {
     // Registration order: most specific claimant first, markdown last
     this.parsers = parsers ?? [
       new ClaudeDirectoryParser(),
+      new CursorRulesParser(),
       new InstructionFileParser(),
       new MarkdownParser(),
     ];
