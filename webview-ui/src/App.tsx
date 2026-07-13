@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { AgentContextTab, EdgeDetails, InspectorTabs, NodeDetails } from "./inspector";
 import {
+  ContextAppliesToPayload,
+  type ContextDetails,
+  ContextDetailsPayload,
   type FilterState,
   GraphPatchPayload,
   GraphSnapshotPayload,
   GraphStatusPayload,
+  type InspectorTab,
   SearchResultsPayload,
   type SelectionDetails,
   SelectionDetailsPayload,
@@ -12,7 +17,7 @@ import {
   makeEnvelope,
   parseEnvelope,
 } from "./protocol";
-import type { GraphEdge, GraphNode, WebviewState } from "./protocol";
+import type { WebviewState } from "./protocol";
 import { type GraphRenderer, type RendererKind, createRenderer } from "./renderer";
 import { applyStylesheet } from "./styles";
 
@@ -53,12 +58,40 @@ export function App() {
   const [search, setSearch] = useState("");
   const [details, setDetails] = useState<SelectionDetails>({ kind: "none" });
   const [matchIds, setMatchIds] = useState<string[]>([]);
+  const [context, setContext] = useState<ContextDetails | null>(null);
+  const [contextLoading, setContextLoading] = useState(false);
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>(
+    () => vscode.getState()?.inspectorTab ?? "details",
+  );
+  const [seenTypes, setSeenTypes] = useState<Set<string>>(() => new Set());
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const nodeTypes = useMemo(
-    () => ["document", "instruction", "missing", "external", "source-file", "directory"],
+  // Canonical chip order; only types present in the graph render (progressive
+  // complexity — repos without .claude/ never see agent chips).
+  const NODE_TYPE_ORDER = useMemo(
+    () => [
+      "document",
+      "instruction",
+      "agent",
+      "skill",
+      "command",
+      "config",
+      "missing",
+      "external",
+      "source-file",
+      "directory",
+    ],
     [],
   );
+  const nodeTypes = useMemo(
+    () => NODE_TYPE_ORDER.filter((t) => seenTypes.has(t) || t === "document"),
+    [NODE_TYPE_ORDER, seenTypes],
+  );
+
+  const selectTab = useCallback((tab: InspectorTab) => {
+    setInspectorTab(tab);
+    persistState({ inspectorTab: tab });
+  }, []);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -70,10 +103,18 @@ export function App() {
     renderer.onSelect((sel) => {
       if (sel.nodeId) {
         vscode.postMessage(makeEnvelope("node/details", { nodeId: sel.nodeId }));
+        // one request feeds both the Agent Context tab and the highlight
+        setContext(null);
+        setContextLoading(true);
+        vscode.postMessage(makeEnvelope("context/request", { nodeId: sel.nodeId }));
       } else if (sel.edgeId) {
         vscode.postMessage(makeEnvelope("node/details", { edgeId: sel.edgeId }));
+        renderer.setContextHighlight(null);
       } else {
         setDetails({ kind: "none" });
+        setContext(null);
+        setContextLoading(false);
+        renderer.setContextHighlight(null);
       }
     });
 
@@ -99,6 +140,7 @@ export function App() {
           renderer.setGraph(p.nodes, p.edges);
           setNodeCount(p.nodes.length);
           setEdgeCount(p.edges.length);
+          setSeenTypes(new Set(p.nodes.map((n) => n.type)));
           persistState({ root: p.root });
           if (p.showExternalLinks != null) {
             const showExternal = p.showExternalLinks;
@@ -120,6 +162,47 @@ export function App() {
             ...rest,
             addedEdges: [...rest.addedEdges, ...(updatedEdges ?? [])],
           });
+          if (rest.addedNodes.length > 0) {
+            setSeenTypes((prev) => {
+              const next = new Set(prev);
+              for (const n of rest.addedNodes) next.add(n.type);
+              return next;
+            });
+          }
+          break;
+        }
+        case "context/details": {
+          const r = ContextDetailsPayload.safeParse(env.payload);
+          if (!r.success) return warnInvalid(env.type);
+          const p = r.data;
+          setContext(p);
+          setContextLoading(false);
+          if (p.reveal) {
+            setInspectorTab("context");
+            persistState({ inspectorTab: "context" });
+          }
+          const activeSources = p.groups
+            .flatMap((g) => g.matches)
+            .filter((m) => m.status === "active")
+            .map((m) => m.source);
+          renderer.setContextHighlight(
+            activeSources.length > 0 || p.subject.nodeId
+              ? { subjectId: p.subject.nodeId, sourceIds: [...new Set(activeSources)] }
+              : null,
+          );
+          break;
+        }
+        case "context/appliesTo": {
+          const r = ContextAppliesToPayload.safeParse(env.payload);
+          if (!r.success) return warnInvalid(env.type);
+          const p = r.data;
+          if (p.subjectNodeIds.length > 0) {
+            renderer.setContextHighlight({
+              subjectId: p.sourceNodeId,
+              sourceIds: p.subjectNodeIds,
+              reverseArrows: true,
+            });
+          }
           break;
         }
         case "graph/status": {
@@ -178,6 +261,8 @@ export function App() {
       }
       if (e.key === "Escape") {
         setDetails({ kind: "none" });
+        setContext(null);
+        rendererRef.current?.setContextHighlight(null);
         searchInputRef.current?.blur();
       }
     };
@@ -270,164 +355,44 @@ export function App() {
         <div class="canvas-host" ref={hostRef} role="img" aria-label="Context graph canvas" />
         <aside class="inspector" aria-label="Thread Inspector">
           <h2>Thread Inspector</h2>
-          {details.kind === "none" && (
-            <p class="muted">Select a node or edge to inspect provenance and relationships.</p>
-          )}
-          {details.kind === "node" && details.node && (
+          {details.kind === "edge" && details.edge && <EdgeDetails edge={details.edge} />}
+          {details.kind === "node" && details.node && !details.node.path && (
             <NodeDetails
               node={details.node}
               incoming={details.incoming ?? []}
               outgoing={details.outgoing ?? []}
             />
           )}
-          {details.kind === "edge" && details.edge && <EdgeDetails edge={details.edge} />}
+          {details.kind === "node" && details.node?.path && (
+            <div>
+              <InspectorTabs active={inspectorTab} onSelect={selectTab} />
+              <div
+                role="tabpanel"
+                id={`tabpanel-${inspectorTab}`}
+                aria-labelledby={`tab-${inspectorTab}`}
+              >
+                {inspectorTab === "details" ? (
+                  <NodeDetails
+                    node={details.node}
+                    incoming={details.incoming ?? []}
+                    outgoing={details.outgoing ?? []}
+                  />
+                ) : (
+                  <AgentContextTab context={context} loading={contextLoading} />
+                )}
+              </div>
+            </div>
+          )}
+          {details.kind === "none" &&
+            (context ? (
+              // Standalone subject (Show Applicable Agent Context on an
+              // un-graphed file): context tab only.
+              <AgentContextTab context={context} loading={contextLoading} />
+            ) : (
+              <p class="muted">Select a node or edge to inspect provenance and relationships.</p>
+            ))}
         </aside>
       </div>
-    </div>
-  );
-}
-
-function NodeDetails({
-  node,
-  incoming,
-  outgoing,
-}: {
-  node: GraphNode;
-  incoming: GraphEdge[];
-  outgoing: GraphEdge[];
-}) {
-  return (
-    <div>
-      <div class="badge">{node.type}</div>
-      <h3>{node.label}</h3>
-      {node.path && (
-        <button
-          type="button"
-          class="linkish"
-          onClick={() => vscode.postMessage(makeEnvelope("node/open", { path: node.path }))}
-        >
-          {node.path}
-        </button>
-      )}
-      {node.path && (
-        <div>
-          <button
-            type="button"
-            class="btn small"
-            onClick={() => vscode.postMessage(makeEnvelope("node/reveal", { path: node.path }))}
-          >
-            Reveal in Explorer
-          </button>
-        </div>
-      )}
-      <section>
-        <h4>Provenance</h4>
-        <ul class="meta">
-          <li>
-            parser: {node.provenance.parserId}@{node.provenance.parserVersion}
-          </li>
-          <li>origin: {node.provenance.origin}</li>
-          <li>confidence: {node.provenance.confidence}</li>
-        </ul>
-      </section>
-      {!!node.metadata.format && (
-        <section>
-          <h4>Format</h4>
-          <p>{String(node.metadata.format)}</p>
-        </section>
-      )}
-      <section>
-        <h4>Outgoing ({outgoing.filter((e) => e.type !== "contains").length})</h4>
-        <ul class="rel">
-          {outgoing
-            .filter((e) => e.type !== "contains")
-            .slice(0, 40)
-            .map((e) => (
-              <li key={e.id}>
-                <span class="etype">{e.type}</span> → {e.target}
-                {e.occurrences[0] && (
-                  <button
-                    type="button"
-                    class="linkish small"
-                    onClick={() =>
-                      vscode.postMessage(
-                        makeEnvelope("node/open", {
-                          path: e.occurrences[0]!.path,
-                          line: e.occurrences[0]!.start.line,
-                          column: e.occurrences[0]!.start.column,
-                        }),
-                      )
-                    }
-                  >
-                    L{e.occurrences[0].start.line}
-                  </button>
-                )}
-              </li>
-            ))}
-        </ul>
-      </section>
-      <section>
-        <h4>Incoming / backlinks ({incoming.filter((e) => e.type !== "contains").length})</h4>
-        <ul class="rel">
-          {incoming
-            .filter((e) => e.type !== "contains")
-            .slice(0, 40)
-            .map((e) => (
-              <li key={e.id}>
-                <span class="etype">{e.type}</span> ← {e.source}
-              </li>
-            ))}
-        </ul>
-      </section>
-    </div>
-  );
-}
-
-function EdgeDetails({ edge }: { edge: GraphEdge }) {
-  return (
-    <div>
-      <div class="badge">{edge.type}</div>
-      <h3>
-        {edge.source} → {edge.target}
-      </h3>
-      <section>
-        <h4>Provenance</h4>
-        <ul class="meta">
-          <li>parser: {edge.provenance.parserId}</li>
-          <li>origin: {edge.provenance.origin}</li>
-          <li>confidence: {edge.provenance.confidence}</li>
-        </ul>
-      </section>
-      <section>
-        <h4>Occurrences ({edge.occurrences.length})</h4>
-        <ul class="rel">
-          {edge.occurrences.map((o, i) => (
-            <li key={`${o.path}:${o.start.offset}:${i}`}>
-              <button
-                type="button"
-                class="linkish"
-                onClick={() =>
-                  vscode.postMessage(
-                    makeEnvelope("node/open", {
-                      path: o.path,
-                      line: o.start.line,
-                      column: o.start.column,
-                    }),
-                  )
-                }
-              >
-                {o.path}:{o.start.line}:{o.start.column}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </section>
-      {!!edge.metadata.rawTarget && (
-        <section>
-          <h4>Raw target</h4>
-          <code>{String(edge.metadata.rawTarget)}</code>
-        </section>
-      )}
     </div>
   );
 }

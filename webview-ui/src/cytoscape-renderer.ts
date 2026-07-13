@@ -6,7 +6,7 @@
 import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
 import fcose from "cytoscape-fcose";
 import type { FilterState, GraphEdge, GraphNode } from "./protocol";
-import type { GraphPatchView, GraphRenderer } from "./renderer";
+import type { ContextHighlight, GraphPatchView, GraphRenderer } from "./renderer";
 
 cytoscape.use(fcose);
 
@@ -156,6 +156,29 @@ export class CytoscapeRenderer implements GraphRenderer {
           selector: ".faded",
           style: { opacity: 0.2, "text-opacity": 0.2 },
         },
+        // Agent-context emphasis: separate classes from hover's .faded so
+        // mouseout's removeClass("faded") can't wipe context state.
+        {
+          selector: ".ctx-dim",
+          style: { opacity: 0.2, "text-opacity": 0.2 },
+        },
+        {
+          selector: "node.ctx-source",
+          style: { "border-width": 2, "border-color": accent },
+        },
+        {
+          selector: "edge.ctx-edge",
+          style: {
+            width: 2,
+            "line-color": accent,
+            "line-style": "dashed",
+            "line-opacity": 0.9,
+            "curve-style": "bezier",
+            "target-arrow-shape": "triangle",
+            "target-arrow-color": accent,
+            "arrow-scale": 0.8,
+          },
+        },
         {
           selector: ".hidden",
           style: { display: "none" },
@@ -201,6 +224,7 @@ export class CytoscapeRenderer implements GraphRenderer {
   setGraph(nodes: GraphNode[], edges: GraphEdge[]): void {
     const cy = this.cy;
     if (!cy) return;
+    this.setContextHighlight(null); // never let ctx: transient edges survive a rebuild
     this.nodesById = new Map(nodes.map((n) => [n.id, n]));
 
     // setGraph rebuilds all elements (Refresh, re-root, cap re-snapshots).
@@ -239,6 +263,7 @@ export class CytoscapeRenderer implements GraphRenderer {
   applyPatch(patch: GraphPatchView): void {
     const cy = this.cy;
     if (!cy) return;
+    this.setContextHighlight(null); // clear before edge merging sees ctx: edges
     const newNodeIds: string[] = [];
     cy.batch(() => {
       for (const id of patch.removedEdgeIds) cy.getElementById(id).remove();
@@ -317,6 +342,48 @@ export class CytoscapeRenderer implements GraphRenderer {
     const cy = this.cy;
     if (!cy) return;
     cy.batch(() => this.applyFilterClasses());
+  }
+
+  /**
+   * Transient decoration: dim everything but subject + sources, border the
+   * sources, and draw dashed accent arrows source → subject. Added edges use
+   * the ctx: id prefix, trigger no layout, and never reach exports (exports
+   * are host-side from the GraphStore).
+   */
+  setContextHighlight(highlight: ContextHighlight | null): void {
+    const cy = this.cy;
+    if (!cy) return;
+    cy.batch(() => {
+      cy.remove("edge.ctx-edge");
+      cy.elements().removeClass("ctx-dim ctx-source");
+      if (!highlight) return;
+
+      const emphasized = cy.collection();
+      for (const id of [highlight.subjectId, ...highlight.sourceIds]) {
+        if (!id) continue;
+        const ele = cy.getElementById(id);
+        if (ele.nonempty() && !ele.hasClass("hidden")) emphasized.merge(ele);
+      }
+      if (emphasized.length === 0) return;
+      cy.elements().not(".hidden").not(emphasized).addClass("ctx-dim");
+
+      const subject = highlight.subjectId ? cy.getElementById(highlight.subjectId) : null;
+      for (const id of highlight.sourceIds) {
+        const source = cy.getElementById(id);
+        if (source.empty() || source.hasClass("hidden")) continue;
+        source.addClass("ctx-source");
+        if (subject?.nonempty() && id !== highlight.subjectId) {
+          const [from, to] = highlight.reverseArrows
+            ? [highlight.subjectId!, id]
+            : [id, highlight.subjectId!];
+          cy.add({
+            group: "edges",
+            data: { id: `ctx:${from}→${to}`, source: from, target: to, transient: true },
+            classes: "ctx-edge",
+          });
+        }
+      }
+    });
   }
 
   focusNode(nodeId: string): void {

@@ -13,12 +13,22 @@ export interface GraphPatchView {
   removedEdgeIds: string[];
 }
 
+/** On-selection agent-context emphasis (G.4): subject + its instruction sources. */
+export interface ContextHighlight {
+  subjectId?: string;
+  sourceIds: string[];
+  /** Arrows point subject → sources instead (instruction-node selections). */
+  reverseArrows?: boolean;
+}
+
 export interface GraphRenderer {
   mount(container: HTMLElement): void;
   setGraph(nodes: GraphNode[], edges: GraphEdge[]): void;
   applyPatch(patch: GraphPatchView): void;
   setFilters(filters: FilterState): void;
   focusNode(nodeId: string): void;
+  /** Transient decoration only — never persisted, never part of exports. */
+  setContextHighlight(highlight: ContextHighlight | null): void;
   destroy(): void;
   onSelect(handler: (sel: { nodeId?: string; edgeId?: string }) => void): void;
   onOpen(handler: (node: GraphNode) => void): void;
@@ -30,6 +40,8 @@ export class NullRenderer implements GraphRenderer {
   private selectHandler?: (sel: { nodeId?: string; edgeId?: string }) => void;
   private openHandler?: (node: GraphNode) => void;
   private el?: HTMLElement;
+  /** Recorded for seam tests. */
+  lastContextHighlight: ContextHighlight | null = null;
 
   mount(container: HTMLElement): void {
     this.el = container;
@@ -57,6 +69,10 @@ export class NullRenderer implements GraphRenderer {
   }
 
   setFilters(_filters: FilterState): void {}
+
+  setContextHighlight(highlight: ContextHighlight | null): void {
+    this.lastContextHighlight = highlight;
+  }
 
   focusNode(nodeId: string): void {
     this.selectHandler?.({ nodeId });
@@ -116,6 +132,7 @@ export class CanvasRenderer implements GraphRenderer {
   private openHandler?: (node: GraphNode) => void;
   private selectedId?: string;
   private hoverId?: string;
+  private contextHighlight: ContextHighlight | null = null;
   private raf = 0;
   private dragging: string | null = null;
   private pan = { x: 0, y: 0 };
@@ -178,6 +195,7 @@ export class CanvasRenderer implements GraphRenderer {
   }
 
   setGraph(nodes: GraphNode[], edges: GraphEdge[]): void {
+    this.contextHighlight = null;
     this.nodes = nodes;
     this.edges = edges;
     this.layoutSeed();
@@ -185,6 +203,7 @@ export class CanvasRenderer implements GraphRenderer {
   }
 
   applyPatch(patch: GraphPatchView): void {
+    this.contextHighlight = null;
     const map = new Map(this.nodes.map((n) => [n.id, n]));
     for (const id of patch.removedNodeIds) {
       map.delete(id);
@@ -212,6 +231,11 @@ export class CanvasRenderer implements GraphRenderer {
 
   setFilters(filters: FilterState): void {
     this.filters = filters;
+    this.draw();
+  }
+
+  setContextHighlight(highlight: ContextHighlight | null): void {
+    this.contextHighlight = highlight;
     this.draw();
   }
 
@@ -350,7 +374,11 @@ export class CanvasRenderer implements GraphRenderer {
 
     const visIds = new Set(this.visibleNodes().map((n) => n.id));
     const neighborhood = new Set<string>();
-    if (this.hoverId || this.selectedId) {
+    if (this.contextHighlight) {
+      // Context emphasis takes precedence: subject + its instruction sources
+      if (this.contextHighlight.subjectId) neighborhood.add(this.contextHighlight.subjectId);
+      for (const id of this.contextHighlight.sourceIds) neighborhood.add(id);
+    } else if (this.hoverId || this.selectedId) {
       const focus = this.hoverId ?? this.selectedId!;
       neighborhood.add(focus);
       for (const e of this.visibleEdges()) {
@@ -380,6 +408,25 @@ export class CanvasRenderer implements GraphRenderer {
       }
       ctx.stroke();
       ctx.setLineDash([]);
+    }
+
+    // context-highlight overlay: dashed accent lines subject → each source
+    if (this.contextHighlight?.subjectId) {
+      const subject = this.positions.get(this.contextHighlight.subjectId);
+      if (subject) {
+        ctx.strokeStyle = "#3794ff";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        for (const id of this.contextHighlight.sourceIds) {
+          const src = this.positions.get(id);
+          if (!src) continue;
+          ctx.beginPath();
+          ctx.moveTo(src.x, src.y);
+          ctx.lineTo(subject.x, subject.y);
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+      }
     }
 
     // nodes

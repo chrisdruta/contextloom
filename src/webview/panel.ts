@@ -159,24 +159,10 @@ export class LoomPanel {
     if (!store || !scopeIndex) return;
 
     let filePath: string | null = null;
+    const node = payload.nodeId ? store.getNode(payload.nodeId) : undefined;
     if (payload.nodeId) {
-      const node = store.getNode(payload.nodeId);
       if (!node?.path) return;
       filePath = node.path;
-      if (INSTRUCTION_FAMILY.has(node.type)) {
-        const subjects = filesInScope(node.id, scopeIndex, store.allFilePaths());
-        const subjectNodeIds = subjects
-          .map((p) => store.pathToId(p))
-          .filter((id): id is string => Boolean(id))
-          .slice(0, APPLIES_TO_CAP);
-        this.post(
-          makeEnvelope("context/appliesTo", {
-            sourceNodeId: node.id,
-            subjectNodeIds,
-            truncated: subjects.length > APPLIES_TO_CAP || undefined,
-          }),
-        );
-      }
     } else if (payload.filePath) {
       filePath = normalizeWorkspaceRelativePath(payload.filePath);
     }
@@ -194,6 +180,22 @@ export class LoomPanel {
         reqId,
       ),
     );
+
+    // After details, so the reverse highlight wins for instruction selections.
+    if (node && INSTRUCTION_FAMILY.has(node.type)) {
+      const subjects = filesInScope(node.id, scopeIndex, store.allFilePaths());
+      const subjectNodeIds = subjects
+        .map((p) => store.pathToId(p))
+        .filter((id): id is string => Boolean(id))
+        .slice(0, APPLIES_TO_CAP);
+      this.post(
+        makeEnvelope("context/appliesTo", {
+          sourceNodeId: node.id,
+          subjectNodeIds,
+          truncated: subjects.length > APPLIES_TO_CAP || undefined,
+        }),
+      );
+    }
   }
 
   private async onMessage(raw: unknown): Promise<void> {

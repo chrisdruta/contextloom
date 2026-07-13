@@ -5,14 +5,19 @@
  */
 import type { z } from "zod";
 import type {
+  ContextDetailsPayload,
   ContextEdgeSchema,
   ContextNodeSchema,
   Envelope,
+  ScopeMatchGroupWire,
+  ScopeMatchWire,
   SelectionDetailsPayload,
   ViewFiltersPayload,
 } from "../../src/shared/protocol";
 
 export {
+  ContextAppliesToPayload,
+  ContextDetailsPayload,
   GraphPatchPayload,
   GraphSnapshotPayload,
   GraphStatusPayload,
@@ -28,11 +33,17 @@ export type GraphNode = z.infer<typeof ContextNodeSchema>;
 export type GraphEdge = z.infer<typeof ContextEdgeSchema>;
 export type FilterState = z.infer<typeof ViewFiltersPayload>;
 export type SelectionDetails = z.infer<typeof SelectionDetailsPayload>;
+export type ContextDetails = z.infer<typeof ContextDetailsPayload>;
+export type ScopeMatch = z.infer<typeof ScopeMatchWire>;
+export type ScopeMatchGroup = z.infer<typeof ScopeMatchGroupWire>;
+
+export type InspectorTab = "details" | "context";
 
 /** State the webview persists across VS Code restarts (panel revival). */
 export interface WebviewState {
   root?: string;
   filters?: FilterState;
+  inspectorTab?: InspectorTab;
 }
 
 interface VsCodeApi {
