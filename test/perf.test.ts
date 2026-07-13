@@ -85,11 +85,51 @@ describe("performance budgets (PLAN §Q)", () => {
         registry,
         refIndex: build.refIndex,
         parseMeta: build.parseMeta,
+        scopeRuleIndex: build.scopeRuleIndex,
+        derivedIds: build.derivedIds,
+        skipped: build.skipped,
       },
     );
     const ms = performance.now() - t0;
     console.log(`[perf] single-file patch: ${ms.toFixed(1)} ms (target 150)`);
     expect(patch.addedEdges.length + patch.updatedEdges.length).toBeGreaterThan(0);
+    expect(ms).toBeLessThan(750); // 5× headroom over the 150 ms target
+  });
+
+  it("applies an instruction-file patch (scope recompute) within budget", () => {
+    writeFileSync(join(workspace, "CLAUDE.md"), "# Root claude\n");
+    writeFileSync(join(workspace, "section-1", "AGENTS.md"), "# Section agents\n");
+    const build = buildGraph({
+      workspaceRoot: workspace,
+      graphRoot: "",
+      settings: defaultSettings(),
+      registry,
+    });
+    const contents = new TextEncoder().encode("# Section agents — edited\n");
+    const snap: FileSnapshot = {
+      path: "section-1/AGENTS.md",
+      contents,
+      hash: contentHash(contents),
+    };
+
+    const t0 = performance.now();
+    const { scope } = applyFileChanges(
+      build.store,
+      { created: [], changed: [snap], deleted: [] },
+      {
+        workspaceRoot: workspace,
+        settings: defaultSettings(),
+        registry,
+        refIndex: build.refIndex,
+        parseMeta: build.parseMeta,
+        scopeRuleIndex: build.scopeRuleIndex,
+        derivedIds: build.derivedIds,
+        skipped: build.skipped,
+      },
+    );
+    const ms = performance.now() - t0;
+    console.log(`[perf] instruction patch incl. scope recompute: ${ms.toFixed(1)} ms (target 150)`);
+    expect(scope).toBeDefined();
     expect(ms).toBeLessThan(750); // 5× headroom over the 150 ms target
   });
 });

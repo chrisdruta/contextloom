@@ -277,16 +277,39 @@ export function applyFileChanges(
     cache?: IndexCache;
     refIndex: Map<string, RawReference[]>;
     parseMeta: Map<string, { headingSlugs: string[]; parserId: string; parserVersion: number }>;
+    /** Enables incremental scope recomputation when provided. */
+    scopeRuleIndex?: Map<string, ScopeRule[]>;
+    derivedIds?: { nodeIds: string[]; edgeIds: string[] };
+    skipped?: { path: string; reason: string }[];
   },
-): { patch: GraphPatch; diagnostics: ParserDiagnostic[] } {
+): {
+  patch: GraphPatch;
+  diagnostics: ParserDiagnostic[];
+  scope?: { scopeIndex: ScopeIndex; derivedIds: { nodeIds: string[]; edgeIds: string[] } };
+} {
   const diagnostics: ParserDiagnostic[] = [];
   const removeNodeIds: string[] = [];
   const removeEdgeIds: string[] = [];
   const nodes: ContextNode[] = [];
   const edges: ContextEdge[] = [];
 
+  // A touched path is scope-relevant when it contributes scope rules,
+  // is an instruction/agent-config file, or participates in @import chains.
+  const hasAtImports = (path: string): boolean =>
+    Array.isArray(store.getNode(`file:${path}`)?.metadata.atImports);
+  let scopeRelevant = false;
+  const markScopeRelevance = (path: string, pr?: ParseResult) => {
+    if (scopeRelevant) return;
+    scopeRelevant =
+      (opts.scopeRuleIndex?.has(path) ?? false) ||
+      (pr ? pr.scopeRules.length > 0 : false) ||
+      (pr?.nodes.some((n) => Array.isArray(n.metadata.atImports)) ?? false) ||
+      hasAtImports(path);
+  };
+
   // Deletes
   for (const path of changes.deleted) {
+    markScopeRelevance(path);
     const id = `file:${path}`;
     // Remove outgoing edges from this file
     for (const e of store.outgoing(id)) {
@@ -295,6 +318,7 @@ export function applyFileChanges(
     removeNodeIds.push(id);
     opts.refIndex.delete(path);
     opts.parseMeta.delete(path);
+    opts.scopeRuleIndex?.delete(path);
     opts.cache?.delete(path);
   }
 
@@ -313,6 +337,11 @@ export function applyFileChanges(
       registry: opts.registry,
       cache: opts.cache,
     });
+    markScopeRelevance(file.path, pr);
+    if (opts.scopeRuleIndex) {
+      if (pr.scopeRules.length > 0) opts.scopeRuleIndex.set(file.path, pr.scopeRules);
+      else opts.scopeRuleIndex.delete(file.path);
+    }
     opts.refIndex.set(file.path, pr.references);
     const headingSlugs = (pr.nodes[0]?.metadata.headingSlugs as string[] | undefined) ?? [];
     const parser = opts.registry.matching(file.path, opts.settings)[0];
@@ -392,8 +421,44 @@ export function applyFileChanges(
   }
 
   const patch = store.applyNodesAndEdges(nodes, edges, removeNodeIds, [...new Set(removeEdgeIds)]);
+
+  // Scope recompute: derived edges are wholesale-replaced and the ScopeIndex
+  // swapped atomically — applies-to is query-time, so no per-file state to chase.
+  let scope:
+    | { scopeIndex: ScopeIndex; derivedIds: { nodeIds: string[]; edgeIds: string[] } }
+    | undefined;
+  if (scopeRelevant && opts.scopeRuleIndex && opts.derivedIds) {
+    const pass = runScopePasses({
+      nodes: store.allNodes(),
+      scopeRuleIndex: opts.scopeRuleIndex,
+      allPaths: existingFiles,
+      skipped: opts.skipped ?? [],
+      workspaceRoot: opts.workspaceRoot,
+      settings: opts.settings,
+    });
+    const newEdgeIds = new Set(pass.derivedIds.edgeIds);
+    const staleEdgeIds = opts.derivedIds.edgeIds.filter((id) => !newEdgeIds.has(id));
+    const newNodeIds = new Set(pass.derivedIds.nodeIds);
+    const staleNodeIds = opts.derivedIds.nodeIds.filter(
+      (id) => !newNodeIds.has(id) && store.getNode(id)?.metadata.skillSupportingFile === true,
+    );
+    const scopePatch = store.applyNodesAndEdges(pass.nodes, pass.edges, staleNodeIds, staleEdgeIds);
+    mergePatches(patch, scopePatch);
+    diagnostics.push(...pass.diagnostics);
+    scope = { scopeIndex: pass.scopeIndex, derivedIds: pass.derivedIds };
+  }
+
   opts.cache?.persist();
-  return { patch, diagnostics };
+  return { patch, diagnostics, scope };
+}
+
+function mergePatches(into: GraphPatch, from: GraphPatch): void {
+  into.addedNodes.push(...from.addedNodes);
+  into.updatedNodes.push(...from.updatedNodes);
+  into.removedNodeIds.push(...from.removedNodeIds);
+  into.addedEdges.push(...from.addedEdges);
+  into.updatedEdges.push(...from.updatedEdges);
+  into.removedEdgeIds.push(...from.removedEdgeIds);
 }
 
 function parseFile(

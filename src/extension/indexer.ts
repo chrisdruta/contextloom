@@ -7,6 +7,7 @@ import type { DiagnosticsPublisher } from "../diagnostics/publisher";
 import { type BuildResult, applyFileChanges, buildGraph } from "../graph/builder";
 import type { GraphStore } from "../graph/store";
 import { ParserRegistry } from "../parsers/registry";
+import type { ScopeIndex } from "../scope/types";
 import type { SettingsService } from "../settings/service";
 import { contentHash } from "../shared/hash";
 import { normalizeWorkspaceRelativePath } from "../shared/paths";
@@ -70,6 +71,11 @@ export class IndexerService implements vscode.Disposable {
 
   get store(): GraphStore | null {
     return this.build?.store ?? null;
+  }
+
+  /** Current scope-resolution snapshot (resolveContext / filesInScope). */
+  get scopeIndex(): ScopeIndex | null {
+    return this.build?.scopeIndex ?? null;
   }
 
   get currentRoot(): string {
@@ -297,7 +303,7 @@ export class IndexerService implements vscode.Disposable {
       }
     }
 
-    const { patch, diagnostics } = applyFileChanges(
+    const { patch, diagnostics, scope } = applyFileChanges(
       this.build.store,
       { created: [], changed, deleted },
       {
@@ -307,13 +313,26 @@ export class IndexerService implements vscode.Disposable {
         cache: this.cache,
         refIndex: this.build.refIndex,
         parseMeta: this.build.parseMeta,
+        scopeRuleIndex: this.build.scopeRuleIndex,
+        derivedIds: this.build.derivedIds,
+        skipped: this.build.skipped,
       },
     );
 
-    // Merge diagnostics for touched files
+    if (scope) {
+      this.build.scopeIndex = scope.scopeIndex;
+      this.build.derivedIds = scope.derivedIds;
+    }
+
+    // Merge diagnostics for touched files; import-chain diagnostics are
+    // recomputed wholesale whenever the scope pass reran.
+    const importCodes = new Set(["import-cycle", "import-depth"]);
     this.build.diagnostics = [
       ...this.build.diagnostics.filter(
-        (d) => !changed.some((f) => f.path === d.range.path) && !deleted.includes(d.range.path),
+        (d) =>
+          !changed.some((f) => f.path === d.range.path) &&
+          !deleted.includes(d.range.path) &&
+          !(scope && d.code && importCodes.has(d.code)),
       ),
       ...diagnostics,
     ];
