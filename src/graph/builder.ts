@@ -11,7 +11,7 @@ import type {
   ParserDiagnostic,
   RawReference,
 } from "../shared/types";
-import { buildBasenameIndex, resolveReferences } from "./resolver";
+import { buildBasenameIndex, buildSkillIndex, resolveReferences } from "./resolver";
 import { GraphStore } from "./store";
 
 export interface BuildProgress {
@@ -122,6 +122,7 @@ export function buildGraph(opts: BuilderOptions): BuildResult {
   for (const [p, meta] of parseMeta) {
     headingSlugsByPath.set(p, meta.headingSlugs);
   }
+  const skillIndex = buildSkillIndex([...parseResults.values()].flatMap((pr) => pr.nodes));
 
   const allNodes: ContextNode[] = [];
   const allEdges: ContextEdge[] = [];
@@ -143,6 +144,7 @@ export function buildGraph(opts: BuilderOptions): BuildResult {
       settings: opts.settings,
       workspaceRoot: opts.workspaceRoot,
       basenameIndex: mapToArrays(basenameIndex),
+      skillIndex,
     });
 
     for (const n of resolved.nodes) {
@@ -270,6 +272,13 @@ export function applyFileChanges(
     headingSlugsByPath.set(p, meta.headingSlugs);
   }
 
+  // Skill index: current store skills minus deleted/touched paths, plus re-parsed nodes
+  const deletedOrTouched = new Set([...changes.deleted, ...touched.map((f) => f.path)]);
+  const skillIndex = buildSkillIndex([
+    ...store.allNodes().filter((n) => !n.path || !deletedOrTouched.has(n.path)),
+    ...nodes,
+  ]);
+
   for (const path of reResolvePaths) {
     const refs = opts.refIndex.get(path);
     if (!refs) continue;
@@ -289,6 +298,7 @@ export function applyFileChanges(
       settings: opts.settings,
       workspaceRoot: opts.workspaceRoot,
       basenameIndex: mapToArrays(basenameIndex),
+      skillIndex,
     });
     nodes.push(...resolved.nodes);
     edges.push(...resolved.edges);

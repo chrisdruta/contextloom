@@ -23,8 +23,18 @@ describe("ParserRegistry.matching", () => {
 
   it("matches files inside dotted directories (dot: true regression)", () => {
     // Discovery walks dotted dirs with dot:true; the registry must match them too.
-    expect(parserIds(".claude/rules/style.md")).toContain("markdown");
     expect(parserIds(".cursor/notes/readme.md")).toContain("markdown");
+    // skill supporting docs are plain markdown, not claude-dir artifacts
+    expect(parserIds(".claude/skills/deploy/references/notes.md")).toContain("markdown");
+  });
+
+  it("routes .claude artifacts exclusively to the claude-dir parser", () => {
+    expect(parserIds(".claude/rules/style.md")).toEqual(["claude-dir"]);
+    expect(parserIds(".claude/agents/reviewer.md")).toEqual(["claude-dir"]);
+    expect(parserIds(".claude/skills/deploy/SKILL.md")).toEqual(["claude-dir"]);
+    expect(parserIds(".claude/settings.json")).toEqual(["claude-dir"]);
+    // .claude/CLAUDE.md stays with the instruction parser
+    expect(parserIds(".claude/CLAUDE.md")).toEqual(["instruction"]);
   });
 
   it("falls back to pattern matching when the claiming parser is disabled", () => {

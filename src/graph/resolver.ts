@@ -1,3 +1,4 @@
+import { classifyClaudePath } from "../parsers/claude-dir";
 import type { ResolvedSettings } from "../settings/schema";
 import { dirId, edgeId, fileId, missingId, urlId } from "../shared/ids";
 import { basename, dirname, extname, resolveLinkTarget } from "../shared/paths";
@@ -18,6 +19,11 @@ const RESOLVER_PROV = (parserId = "resolver"): Provenance => ({
   confidence: 1,
 });
 
+export interface SkillIndexEntry {
+  path: string;
+  claudeRoot: string;
+}
+
 export interface ResolveInput {
   sourcePath: string;
   references: RawReference[];
@@ -33,6 +39,8 @@ export interface ResolveInput {
   workspaceRoot: string;
   /** Basename → paths for wiki resolution. */
   basenameIndex: Map<string, string[]>;
+  /** Skill name → SKILL.md locations, for uses-skill references. */
+  skillIndex?: Map<string, SkillIndexEntry[]>;
 }
 
 export interface ResolveOutput {
@@ -73,6 +81,11 @@ export function resolveReferences(input: ResolveInput): ResolveOutput {
   for (const ref of input.references) {
     if (ref.kind === "wiki-link") {
       resolveWiki(ref, input, exists, addNode, addEdge, diagnostics, sourceId);
+      continue;
+    }
+
+    if (ref.rel === "uses-skill") {
+      resolveUsesSkill(ref, input, addNode, addEdge, diagnostics, sourceId);
       continue;
     }
 
@@ -386,6 +399,84 @@ function resolveWiki(
     range: ref.range,
     code: "broken-wiki-link",
   });
+}
+
+/** Skill name → SKILL.md locations, from parsed skill nodes. */
+export function buildSkillIndex(nodes: Iterable<ContextNode>): Map<string, SkillIndexEntry[]> {
+  const index = new Map<string, SkillIndexEntry[]>();
+  for (const node of nodes) {
+    if (node.type !== "skill" || !node.path) continue;
+    const name = typeof node.metadata.name === "string" ? node.metadata.name : node.label;
+    const claudeRoot = typeof node.metadata.claudeRoot === "string" ? node.metadata.claudeRoot : "";
+    const entries = index.get(name) ?? [];
+    entries.push({ path: node.path, claudeRoot });
+    index.set(name, entries);
+  }
+  return index;
+}
+
+/**
+ * Resolve an agent's `skills:` entry by skill name: prefer the agent's own
+ * .claude root, then the workspace root, then a unique match anywhere.
+ * Ambiguity yields a diagnostic and no edge (never guess).
+ */
+function resolveUsesSkill(
+  ref: RawReference,
+  input: ResolveInput,
+  addNode: (n: ContextNode) => void,
+  addEdge: (e: ContextEdge) => void,
+  diagnostics: ParserDiagnostic[],
+  sourceId: string,
+): void {
+  const name = ref.rawTarget;
+  const candidates = input.skillIndex?.get(name) ?? [];
+  const agentRoot = classifyClaudePath(input.sourcePath)?.claudeRoot ?? "";
+
+  let chosen: SkillIndexEntry | undefined;
+  if (candidates.length === 1) {
+    chosen = candidates[0];
+  } else if (candidates.length > 1) {
+    const sameRoot = candidates.filter((c) => c.claudeRoot === agentRoot);
+    const atWorkspaceRoot = candidates.filter((c) => c.claudeRoot === "");
+    if (sameRoot.length === 1) chosen = sameRoot[0];
+    else if (atWorkspaceRoot.length === 1) chosen = atWorkspaceRoot[0];
+    else {
+      diagnostics.push({
+        severity: "warning",
+        message: `Ambiguous skill "${name}": ${candidates.map((c) => c.path).join(", ")}`,
+        range: ref.range,
+        code: "ambiguous-skill",
+      });
+      return;
+    }
+  }
+
+  if (!chosen) {
+    const expected =
+      agentRoot === ""
+        ? `.claude/skills/${name}/SKILL.md`
+        : `${agentRoot}/.claude/skills/${name}/SKILL.md`;
+    const tid = missingId(expected);
+    addNode({
+      id: tid,
+      type: "missing",
+      label: name,
+      path: expected,
+      metadata: { reason: "missing-skill", rawTarget: name },
+      provenance: RESOLVER_PROV(),
+      cacheable: false,
+    });
+    addEdge(makeEdge("broken-ref", sourceId, tid, [ref.range], { rawTarget: name }));
+    diagnostics.push({
+      severity: "error",
+      message: `Agent references missing skill "${name}"`,
+      range: ref.range,
+      code: "missing-skill",
+    });
+    return;
+  }
+
+  addEdge(makeEdge("uses-skill", sourceId, fileId(chosen.path), [ref.range], { skill: name }));
 }
 
 function makeEdge(

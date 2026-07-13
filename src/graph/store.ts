@@ -23,8 +23,10 @@ type EdgeAttrs = {
  * Graphology-backed store with reverse index and patch computation.
  */
 export class GraphStore {
+  // multi: true — edges are keyed type|source|target, so distinct edge types
+  // (contains + defines-agent, link + overrides, …) can share a node pair.
   private graph = new Graph<NodeAttrs, EdgeAttrs>({
-    multi: false,
+    multi: true,
     type: "directed",
     allowSelfLoops: true,
   });

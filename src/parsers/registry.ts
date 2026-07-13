@@ -1,6 +1,7 @@
 import picomatch from "picomatch";
 import type { ResolvedSettings } from "../settings/schema";
 import type { FileSnapshot, ParseResult } from "../shared/types";
+import { ClaudeDirectoryParser } from "./claude-dir";
 import { InstructionFileParser } from "./instruction";
 import { MarkdownParser } from "./markdown";
 import type { ContextParser, ParseContext } from "./types";
@@ -11,7 +12,11 @@ export class ParserRegistry {
 
   constructor(parsers?: ContextParser[]) {
     // Registration order: most specific claimant first, markdown last
-    this.parsers = parsers ?? [new InstructionFileParser(), new MarkdownParser()];
+    this.parsers = parsers ?? [
+      new ClaudeDirectoryParser(),
+      new InstructionFileParser(),
+      new MarkdownParser(),
+    ];
   }
 
   list(): readonly ContextParser[] {
