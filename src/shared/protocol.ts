@@ -90,6 +90,10 @@ export const SearchResultsPayload = z.object({
   matchIds: z.array(z.string()),
 });
 
+export const ViewFocusPayload = z.object({
+  nodeId: z.string().min(1).max(4096),
+});
+
 // Webview → host
 export const NodeOpenPayload = z.object({
   path: z.string().min(1).max(4096),

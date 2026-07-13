@@ -40,6 +40,7 @@ export const SettingsSchema = z.object({
     .object({
       showExternalLinks: z.boolean().default(false),
       maxNodes: z.number().int().positive().max(10_000).default(3000),
+      renderer: z.enum(["cytoscape", "canvas"]).default("cytoscape"),
     })
     .default({}),
   diagnostics: z

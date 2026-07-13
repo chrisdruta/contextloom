@@ -1,8 +1,10 @@
 import * as vscode from "vscode";
 import { DiagnosticsPublisher } from "../diagnostics/publisher";
 import { exportGraphJson } from "../export/export";
+import type { GraphStore } from "../graph/store";
 import { SettingsService } from "../settings/service";
 import { normalizeWorkspaceRelativePath } from "../shared/paths";
+import type { ParserDiagnostic } from "../shared/types";
 import { LoomPanel } from "../webview/panel";
 import { IndexerService } from "./indexer";
 import { GraphOutlineProvider, GraphRootsProvider, LooseThreadsProvider } from "./views";
@@ -10,7 +12,18 @@ import { GraphOutlineProvider, GraphRootsProvider, LooseThreadsProvider } from "
 let indexer: IndexerService | undefined;
 let statusBar: vscode.StatusBarItem | undefined;
 
-export function activate(context: vscode.ExtensionContext): void {
+/** Internal API returned from activate() — used by integration tests. Unstable. */
+export interface ContextLoomTestApi {
+  openRoot(root: string): Promise<void>;
+  reindexAndWait(): Promise<void>;
+  getStore(): GraphStore | null;
+  exportJson(): string | null;
+  search(query: string): string[];
+  getDiagnostics(): ParserDiagnostic[];
+  onDidUpdate: IndexerService["onDidUpdate"];
+}
+
+export function activate(context: vscode.ExtensionContext): ContextLoomTestApi {
   const settings = new SettingsService();
   const diagnostics = new DiagnosticsPublisher();
   indexer = new IndexerService(context, settings, diagnostics);
@@ -138,7 +151,30 @@ export function activate(context: vscode.ExtensionContext): void {
       LoomPanel.show(context.extensionUri, indexer!, settings);
       LoomPanel.current?.focusNode(nodeId);
     }),
+
+    vscode.window.registerWebviewPanelSerializer(LoomPanel.viewType, {
+      deserializeWebviewPanel: async (panel: vscode.WebviewPanel, state: unknown) => {
+        LoomPanel.revive(panel, context.extensionUri, indexer!, settings);
+        const stored = (state ?? {}) as { root?: unknown };
+        const root = normalizeWorkspaceRelativePath(
+          typeof stored.root === "string" ? stored.root : "",
+        );
+        await indexer!.openRoot(root ?? "");
+      },
+    }),
   );
+
+  const api: ContextLoomTestApi = {
+    openRoot: (root) => indexer!.openRoot(root),
+    reindexAndWait: () => indexer!.reindex("test"),
+    getStore: () => indexer!.store,
+    exportJson: () =>
+      indexer!.store ? exportGraphJson(indexer!.store, indexer!.currentRoot) : null,
+    search: (query) => indexer!.search(query),
+    getDiagnostics: () => indexer!.diagnosticsList,
+    onDidUpdate: indexer.onDidUpdate,
+  };
+  return api;
 }
 
 export function deactivate(): void {

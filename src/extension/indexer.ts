@@ -26,9 +26,10 @@ export class IndexerService implements vscode.Disposable {
   private workspaceRoot = "";
   private state: IndexState = "idle";
   private generation = 0;
-  private watcher: vscode.FileSystemWatcher | undefined;
+  private watchers: vscode.FileSystemWatcher[] = [];
   private pendingEvents: { type: "create" | "change" | "delete"; uri: vscode.Uri }[] = [];
   private debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  private ignoreDebounceTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly disposables: vscode.Disposable[] = [];
 
   private readonly _onDidUpdate = new vscode.EventEmitter<{
@@ -180,16 +181,39 @@ export class IndexerService implements vscode.Disposable {
   }
 
   private ensureWatcher(): void {
-    this.watcher?.dispose();
+    for (const w of this.watchers) w.dispose();
+    this.watchers = [];
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (!folder) return;
 
-    const pattern = new vscode.RelativePattern(folder, "**/*.{md,mdc}");
-    this.watcher = vscode.workspace.createFileSystemWatcher(pattern);
-    this.watcher.onDidCreate((uri) => this.queueEvent("create", uri));
-    this.watcher.onDidChange((uri) => this.queueEvent("change", uri));
-    this.watcher.onDidDelete((uri) => this.queueEvent("delete", uri));
-    this.disposables.push(this.watcher);
+    // Watch what discovery includes (PLAN §L.2) rather than a hardcoded glob,
+    // so instruction/config files added to contextloom.include are tracked.
+    const MAX_WATCHERS = 20;
+    const patterns = [...new Set(this.settings.settings.include)].slice(0, MAX_WATCHERS);
+    for (const glob of patterns) {
+      const watcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(folder, glob),
+      );
+      watcher.onDidCreate((uri) => this.queueEvent("create", uri));
+      watcher.onDidChange((uri) => this.queueEvent("change", uri));
+      watcher.onDidDelete((uri) => this.queueEvent("delete", uri));
+      this.watchers.push(watcher);
+    }
+
+    // .gitignore edits change what discovery sees — full reindex (debounced).
+    if (this.settings.settings.respectGitignore) {
+      const ignoreWatcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(folder, "**/.gitignore"),
+      );
+      const onIgnoreChange = () => {
+        if (this.ignoreDebounceTimer) clearTimeout(this.ignoreDebounceTimer);
+        this.ignoreDebounceTimer = setTimeout(() => void this.reindex("Ignore rules changed"), 500);
+      };
+      ignoreWatcher.onDidCreate(onIgnoreChange);
+      ignoreWatcher.onDidChange(onIgnoreChange);
+      ignoreWatcher.onDidDelete(onIgnoreChange);
+      this.watchers.push(ignoreWatcher);
+    }
   }
 
   private queueEvent(type: "create" | "change" | "delete", uri: vscode.Uri): void {
@@ -323,8 +347,9 @@ export class IndexerService implements vscode.Disposable {
 
   dispose(): void {
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
+    if (this.ignoreDebounceTimer) clearTimeout(this.ignoreDebounceTimer);
     for (const d of this.disposables) d.dispose();
-    this.watcher?.dispose();
+    for (const w of this.watchers) w.dispose();
     this._onDidUpdate.dispose();
     this._onDidStateChange.dispose();
   }

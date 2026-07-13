@@ -1,6 +1,8 @@
 /**
- * GraphRenderer interface + Cytoscape implementation + NullRenderer seam.
+ * GraphRenderer interface + renderer implementations behind the seam:
+ * CytoscapeRenderer (default), CanvasRenderer (fallback), NullRenderer (tests).
  */
+import { CytoscapeRenderer } from "./cytoscape-renderer";
 import type { FilterState, GraphEdge, GraphNode } from "./protocol";
 
 export interface GraphPatchView {
@@ -510,7 +512,11 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/** Factory: prefer CanvasRenderer; NullRenderer available for seam tests. */
-export function createRenderer(kind: "canvas" | "null" = "canvas"): GraphRenderer {
-  return kind === "null" ? new NullRenderer() : new CanvasRenderer();
+export type RendererKind = "cytoscape" | "canvas" | "null";
+
+/** Factory: cytoscape (default, ADR-001); canvas as lightweight fallback; null for seam tests. */
+export function createRenderer(kind: RendererKind = "cytoscape"): GraphRenderer {
+  if (kind === "null") return new NullRenderer();
+  if (kind === "canvas") return new CanvasRenderer();
+  return new CytoscapeRenderer();
 }

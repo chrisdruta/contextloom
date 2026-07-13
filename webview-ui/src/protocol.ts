@@ -1,76 +1,68 @@
-/** Minimal protocol types for the webview (mirrors host schemas). */
+/**
+ * Webview side of the protocol. Types and validation come from the shared
+ * host schemas (src/shared/protocol.ts) so both sides validate identically —
+ * there is deliberately no hand-mirrored copy here.
+ */
+import type { z } from "zod";
+import type {
+  ContextEdgeSchema,
+  ContextNodeSchema,
+  Envelope,
+  SelectionDetailsPayload,
+  ViewFiltersPayload,
+} from "../../src/shared/protocol";
 
-export interface Envelope {
-  v: number;
-  id: string;
-  type: string;
-  payload: unknown;
+export {
+  GraphPatchPayload,
+  GraphSnapshotPayload,
+  GraphStatusPayload,
+  SearchResultsPayload,
+  SelectionDetailsPayload,
+  ViewFocusPayload,
+  makeEnvelope,
+  parseEnvelope,
+} from "../../src/shared/protocol";
+export type { Envelope } from "../../src/shared/protocol";
+
+export type GraphNode = z.infer<typeof ContextNodeSchema>;
+export type GraphEdge = z.infer<typeof ContextEdgeSchema>;
+export type FilterState = z.infer<typeof ViewFiltersPayload>;
+export type SelectionDetails = z.infer<typeof SelectionDetailsPayload>;
+
+/** State the webview persists across VS Code restarts (panel revival). */
+export interface WebviewState {
+  root?: string;
+  filters?: FilterState;
 }
 
-export interface GraphNode {
-  id: string;
-  type: string;
-  label: string;
-  path?: string;
-  metadata: Record<string, unknown>;
-  provenance: {
-    parserId: string;
-    parserVersion: number;
-    origin: "explicit" | "inferred";
-    confidence: number;
-  };
-  cacheable: boolean;
-}
-
-export interface GraphEdge {
-  id: string;
-  type: string;
-  source: string;
-  target: string;
-  occurrences: {
-    path: string;
-    start: { line: number; column: number; offset: number };
-    end: { line: number; column: number; offset: number };
-  }[];
-  metadata: Record<string, unknown>;
-  provenance: GraphNode["provenance"];
-  cacheable: boolean;
-}
-
-export interface FilterState {
-  hiddenNodeTypes: string[];
-  hiddenEdgeTypes: string[];
-  showInferred: boolean;
-  showExternal: boolean;
+interface VsCodeApi {
+  postMessage(msg: Envelope): void;
+  getState(): WebviewState | undefined;
+  setState(state: WebviewState): void;
 }
 
 declare global {
   interface Window {
-    acquireVsCodeApi?: () => {
-      postMessage(msg: unknown): void;
-      getState(): unknown;
-      setState(state: unknown): void;
-    };
+    acquireVsCodeApi?: () => VsCodeApi;
   }
 }
 
-export function getVsCodeApi() {
+let cached: VsCodeApi | undefined;
+
+export function getVsCodeApi(): VsCodeApi {
+  if (cached) return cached;
   if (typeof window.acquireVsCodeApi === "function") {
-    return window.acquireVsCodeApi();
+    cached = window.acquireVsCodeApi();
+    return cached;
   }
-  // Dev fallback
-  return {
-    postMessage: (msg: unknown) => console.log("postMessage", msg),
-    getState: () => null,
-    setState: (_s: unknown) => {},
+  // Dev fallback (running outside VS Code)
+  let devState: WebviewState | undefined;
+  cached = {
+    postMessage: (msg) => console.log("postMessage", msg),
+    getState: () => devState,
+    setState: (s) => {
+      devState = s;
+    },
   };
-}
-
-export function makeEnvelope(type: string, payload: unknown, id?: string): Envelope {
-  return {
-    v: 1,
-    id: id ?? Math.random().toString(36).slice(2),
-    type,
-    payload,
-  };
+  return cached;
 }

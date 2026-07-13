@@ -45,6 +45,7 @@ export class SettingsService implements vscode.Disposable {
       graph: {
         showExternalLinks: cfg.get("graph.showExternalLinks"),
         maxNodes: cfg.get("graph.maxNodes"),
+        renderer: cfg.get("graph.renderer"),
       },
       diagnostics: {
         enabled: cfg.get("diagnostics.enabled"),

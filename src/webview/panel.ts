@@ -22,6 +22,7 @@ import {
 } from "../shared/protocol";
 
 export class LoomPanel {
+  public static readonly viewType = "contextloom.loom";
   public static current: LoomPanel | undefined;
   private readonly panel: vscode.WebviewPanel;
   private disposables: vscode.Disposable[] = [];
@@ -97,7 +98,7 @@ export class LoomPanel {
     }
 
     const panel = vscode.window.createWebviewPanel(
-      "contextloom.loom",
+      LoomPanel.viewType,
       "ContextLoom — Loom View",
       column,
       {
@@ -107,6 +108,22 @@ export class LoomPanel {
       },
     );
 
+    LoomPanel.current = new LoomPanel(panel, extensionUri, indexer, settings);
+    return LoomPanel.current;
+  }
+
+  /** Re-attach to a panel VS Code restored after a window reload. */
+  static revive(
+    panel: vscode.WebviewPanel,
+    extensionUri: vscode.Uri,
+    indexer: IndexerService,
+    settings: SettingsService,
+  ): LoomPanel {
+    panel.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(extensionUri, "dist")],
+    };
+    LoomPanel.current?.dispose();
     LoomPanel.current = new LoomPanel(panel, extensionUri, indexer, settings);
     return LoomPanel.current;
   }
@@ -349,7 +366,7 @@ export class LoomPanel {
   </style>
 </head>
 <body>
-  <div id="app"></div>
+  <div id="app" data-renderer="${this.settings.settings.graph.renderer}"></div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

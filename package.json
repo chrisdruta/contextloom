@@ -44,7 +44,8 @@
     "onCommand:contextloom.exportGraph",
     "onView:contextloom.graphRoots",
     "onView:contextloom.looseThreads",
-    "onView:contextloom.graphOutline"
+    "onView:contextloom.graphOutline",
+    "onWebviewPanel:contextloom.loom"
   ],
   "main": "./dist/extension.js",
   "capabilities": {
@@ -207,6 +208,12 @@
           "default": 3000,
           "description": "Maximum nodes sent to the graph view."
         },
+        "contextloom.graph.renderer": {
+          "type": "string",
+          "enum": ["cytoscape", "canvas"],
+          "default": "cytoscape",
+          "description": "Graph renderer: cytoscape (fcose layout, richer interactions) or canvas (lightweight fallback). Reopen the Loom View after changing."
+        },
         "contextloom.diagnostics.enabled": {
           "type": "boolean",
           "default": true,
@@ -241,18 +248,28 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "package": "vsce package --no-dependencies",
-    "vscode:prepublish": "bun run build"
+    "vscode:prepublish": "bun run build",
+    "test:integration": "bun run build && bun run scripts/build-tests.ts && vscode-test",
+    "bench:renderers": "bun run scripts/bench-renderers.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@types/cytoscape": "^3.31.0",
+    "@types/mocha": "^10.0.10",
     "@types/node": "^22.10.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.0.0",
     "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.28.1",
+    "mocha": "^11.7.6",
+    "ovsx": "^1.0.2",
     "typescript": "^5.7.2",
     "vitest": "^4.1.10"
   },
   "dependencies": {
+    "cytoscape": "^3.34.0",
+    "cytoscape-fcose": "^2.2.0",
     "github-slugger": "^2.0.0",
     "graphology": "^0.25.4",
     "graphology-types": "^0.24.7",
@@ -266,9 +283,5 @@
     "preact": "^10.25.2",
     "yaml": "^2.6.1",
     "zod": "^3.24.1"
-  },
-  "optionalDependencies": {
-    "cytoscape": "^3.30.4",
-    "cytoscape-fcose": "^2.2.0"
   }
 }

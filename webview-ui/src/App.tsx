@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { FilterState, GraphEdge, GraphNode } from "./protocol";
-import { getVsCodeApi, makeEnvelope } from "./protocol";
-import { type GraphRenderer, createRenderer } from "./renderer";
+import {
+  type FilterState,
+  GraphPatchPayload,
+  GraphSnapshotPayload,
+  GraphStatusPayload,
+  SearchResultsPayload,
+  type SelectionDetails,
+  SelectionDetailsPayload,
+  ViewFocusPayload,
+  getVsCodeApi,
+  makeEnvelope,
+  parseEnvelope,
+} from "./protocol";
+import type { GraphEdge, GraphNode, WebviewState } from "./protocol";
+import { type GraphRenderer, type RendererKind, createRenderer } from "./renderer";
 
 const vscode = getVsCodeApi();
 
@@ -12,12 +24,17 @@ const DEFAULT_FILTERS: FilterState = {
   showExternal: false,
 };
 
-interface Details {
-  kind: "node" | "edge" | "none";
-  node?: GraphNode;
-  edge?: GraphEdge;
-  incoming?: GraphEdge[];
-  outgoing?: GraphEdge[];
+function persistState(partial: WebviewState): void {
+  vscode.setState({ ...(vscode.getState() ?? {}), ...partial });
+}
+
+function rendererKindFromDom(): RendererKind {
+  const attr = document.getElementById("app")?.dataset.renderer;
+  return attr === "canvas" || attr === "null" || attr === "cytoscape" ? attr : "cytoscape";
+}
+
+function warnInvalid(type: string): void {
+  console.warn(`[ContextLoom] dropped invalid ${type} message`);
 }
 
 export function App() {
@@ -26,9 +43,11 @@ export function App() {
   const [status, setStatus] = useState("Connecting…");
   const [nodeCount, setNodeCount] = useState(0);
   const [edgeCount, setEdgeCount] = useState(0);
-  const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
+  const [filters, setFilters] = useState<FilterState>(
+    () => vscode.getState()?.filters ?? DEFAULT_FILTERS,
+  );
   const [search, setSearch] = useState("");
-  const [details, setDetails] = useState<Details>({ kind: "none" });
+  const [details, setDetails] = useState<SelectionDetails>({ kind: "none" });
   const [matchIds, setMatchIds] = useState<string[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -39,10 +58,10 @@ export function App() {
 
   useEffect(() => {
     if (!hostRef.current) return;
-    const renderer = createRenderer("canvas");
+    const renderer = createRenderer(rendererKindFromDom());
     rendererRef.current = renderer;
     renderer.mount(hostRef.current);
-    renderer.setFilters(DEFAULT_FILTERS);
+    renderer.setFilters(vscode.getState()?.filters ?? DEFAULT_FILTERS);
 
     renderer.onSelect((sel) => {
       if (sel.nodeId) {
@@ -65,23 +84,24 @@ export function App() {
     });
 
     const onMsg = (event: MessageEvent) => {
-      const env = event.data as { v?: number; type?: string; payload?: unknown };
-      if (!env || env.v !== 1 || !env.type) return;
+      const env = parseEnvelope(event.data);
+      if (!env) return;
 
       switch (env.type) {
         case "graph/snapshot": {
-          const p = env.payload as {
-            nodes: GraphNode[];
-            edges: GraphEdge[];
-            showExternalLinks?: boolean;
-          };
+          const r = GraphSnapshotPayload.safeParse(env.payload);
+          if (!r.success) return warnInvalid(env.type);
+          const p = r.data;
           renderer.setGraph(p.nodes, p.edges);
           setNodeCount(p.nodes.length);
           setEdgeCount(p.edges.length);
+          persistState({ root: p.root });
           if (p.showExternalLinks != null) {
+            const showExternal = p.showExternalLinks;
             setFilters((f) => {
-              const next = { ...f, showExternal: p.showExternalLinks! };
+              const next = { ...f, showExternal };
               renderer.setFilters(next);
+              persistState({ filters: next });
               return next;
             });
           }
@@ -89,42 +109,42 @@ export function App() {
           break;
         }
         case "graph/patch": {
-          const p = env.payload as {
-            addedNodes: GraphNode[];
-            updatedNodes: GraphNode[];
-            removedNodeIds: string[];
-            addedEdges: GraphEdge[];
-            removedEdgeIds: string[];
-          };
-          renderer.applyPatch(p);
+          const r = GraphPatchPayload.safeParse(env.payload);
+          if (!r.success) return warnInvalid(env.type);
+          const { updatedEdges, ...rest } = r.data;
+          renderer.applyPatch({
+            ...rest,
+            addedEdges: [...rest.addedEdges, ...(updatedEdges ?? [])],
+          });
           break;
         }
         case "graph/status": {
-          const p = env.payload as {
-            state: string;
-            message?: string;
-            nodeCount?: number;
-            edgeCount?: number;
-          };
+          const r = GraphStatusPayload.safeParse(env.payload);
+          if (!r.success) return warnInvalid(env.type);
+          const p = r.data;
           setStatus(p.message ?? p.state);
           if (p.nodeCount != null) setNodeCount(p.nodeCount);
           if (p.edgeCount != null) setEdgeCount(p.edgeCount);
           break;
         }
         case "selection/details": {
-          setDetails(env.payload as Details);
+          const r = SelectionDetailsPayload.safeParse(env.payload);
+          if (!r.success) return warnInvalid(env.type);
+          setDetails(r.data);
           break;
         }
         case "view/searchResults": {
-          const p = env.payload as { matchIds: string[] };
-          setMatchIds(p.matchIds);
-          if (p.matchIds[0]) renderer.focusNode(p.matchIds[0]);
+          const r = SearchResultsPayload.safeParse(env.payload);
+          if (!r.success) return warnInvalid(env.type);
+          setMatchIds(r.data.matchIds);
+          if (r.data.matchIds[0]) renderer.focusNode(r.data.matchIds[0]);
           break;
         }
         case "view/focus": {
-          const p = env.payload as { nodeId: string };
-          renderer.focusNode(p.nodeId);
-          vscode.postMessage(makeEnvelope("node/details", { nodeId: p.nodeId }));
+          const r = ViewFocusPayload.safeParse(env.payload);
+          if (!r.success) return warnInvalid(env.type);
+          renderer.focusNode(r.data.nodeId);
+          vscode.postMessage(makeEnvelope("node/details", { nodeId: r.data.nodeId }));
           break;
         }
         default:
@@ -160,6 +180,7 @@ export function App() {
   const updateFilters = useCallback((next: FilterState) => {
     setFilters(next);
     rendererRef.current?.setFilters(next);
+    persistState({ filters: next });
     vscode.postMessage(makeEnvelope("view/filters", next));
   }, []);
 
