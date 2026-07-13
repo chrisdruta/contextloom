@@ -323,10 +323,14 @@ export class LoomPanel {
       vscode.Uri.joinPath(this.extensionUri, "dist", "webview.js"),
     );
     const nonce = getNonce();
+    // Note: 'unsafe-inline' is deliberately absent from style-src — with a
+    // nonce present browsers ignore it anyway (CSP3), which is why the app
+    // stylesheet is injected via adoptedStyleSheets (webview-ui/src/styles.ts),
+    // not a <style> element.
     const csp = [
       "default-src 'none'",
       `script-src 'nonce-${nonce}'`,
-      `style-src ${webview.cspSource} 'nonce-${nonce}' 'unsafe-inline'`,
+      `style-src ${webview.cspSource} 'nonce-${nonce}'`,
       `img-src ${webview.cspSource} data:`,
       `font-src ${webview.cspSource}`,
     ].join("; ");
