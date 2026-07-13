@@ -7,7 +7,12 @@ import { normalizeWorkspaceRelativePath } from "../shared/paths";
 import type { ParserDiagnostic } from "../shared/types";
 import { LoomPanel } from "../webview/panel";
 import { IndexerService } from "./indexer";
-import { GraphOutlineProvider, GraphRootsProvider, LooseThreadsProvider } from "./views";
+import {
+  AgentsSkillsProvider,
+  GraphOutlineProvider,
+  GraphRootsProvider,
+  LooseThreadsProvider,
+} from "./views";
 
 let indexer: IndexerService | undefined;
 let statusBar: vscode.StatusBarItem | undefined;
@@ -37,6 +42,7 @@ export function activate(context: vscode.ExtensionContext): ContextLoomTestApi {
   const rootsProvider = new GraphRootsProvider(() => settings.settings.roots);
   const looseProvider = new LooseThreadsProvider(indexer);
   const outlineProvider = new GraphOutlineProvider(indexer);
+  const agentsProvider = new AgentsSkillsProvider(indexer);
 
   context.subscriptions.push(
     settings,
@@ -45,6 +51,7 @@ export function activate(context: vscode.ExtensionContext): ContextLoomTestApi {
     statusBar,
     vscode.window.registerTreeDataProvider("contextloom.graphRoots", rootsProvider),
     vscode.window.registerTreeDataProvider("contextloom.looseThreads", looseProvider),
+    vscode.window.registerTreeDataProvider("contextloom.agentsSkills", agentsProvider),
     vscode.window.registerTreeDataProvider("contextloom.graphOutline", outlineProvider),
   );
 
@@ -112,6 +119,40 @@ export function activate(context: vscode.ExtensionContext): ContextLoomTestApi {
       }
       const nodeId = `file:${rel.replace(/\\/g, "/")}`;
       LoomPanel.current?.focusNode(nodeId);
+    }),
+
+    vscode.commands.registerCommand("contextloom.showAgentContext", async (arg?: unknown) => {
+      // Subject: explorer Uri arg > active editor. Any file is a valid
+      // subject — a .ts source is the canonical case (stories 7/8).
+      let rel: string | undefined;
+      if (arg instanceof vscode.Uri) {
+        const candidate = vscode.workspace.asRelativePath(arg, false);
+        if (candidate !== arg.fsPath) rel = candidate;
+      } else {
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+          const candidate = vscode.workspace.asRelativePath(editor.document.uri, false);
+          if (candidate !== editor.document.uri.fsPath) rel = candidate;
+        }
+      }
+      if (!rel) {
+        void vscode.window.showInformationMessage(
+          "Open a workspace file to see its agent context.",
+        );
+        return;
+      }
+      rel = rel.replace(/\\/g, "/");
+
+      if (!indexer!.store) {
+        await openGraph("");
+      } else {
+        LoomPanel.show(context.extensionUri, indexer!, settings);
+      }
+      const nodeId = `file:${rel}`;
+      if (indexer!.store?.hasNode(nodeId)) {
+        LoomPanel.current?.focusNode(nodeId);
+      }
+      LoomPanel.current?.showAgentContext(rel);
     }),
 
     vscode.commands.registerCommand("contextloom.findLooseThreads", async () => {

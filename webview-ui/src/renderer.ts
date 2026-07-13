@@ -3,6 +3,7 @@
  * CytoscapeRenderer (default), CanvasRenderer (fallback), NullRenderer (tests).
  */
 import { CytoscapeRenderer } from "./cytoscape-renderer";
+import { edgeColor as sharedEdgeColor, nodeColor as sharedNodeColor } from "./node-style";
 import type { FilterState, GraphEdge, GraphNode } from "./protocol";
 
 export interface GraphPatchView {
@@ -527,28 +528,12 @@ export class CanvasRenderer implements GraphRenderer {
 }
 
 function nodeColor(type: string, _dim: boolean): string {
-  switch (type) {
-    case "instruction":
-      return "#c586c0";
-    case "document":
-      return "#4fc1ff";
-    case "missing":
-      return "#f14c4c";
-    case "external":
-      return "#89d185";
-    case "source-file":
-      return "#dcdcaa";
-    default:
-      return "#cccccc";
-  }
+  return sharedNodeColor(type);
 }
 
 function edgeColor(type: string, dim: boolean): string {
   const alpha = dim ? "40" : "aa";
-  if (type === "broken-ref") return `#f14c4c${alpha}`;
-  if (type === "wiki-link") return `#dcdcaa${alpha}`;
-  if (type === "references") return `#89d185${alpha}`;
-  return `#888888${alpha}`;
+  return `${sharedEdgeColor(type)}${alpha}`;
 }
 
 function escapeHtml(s: string): string {

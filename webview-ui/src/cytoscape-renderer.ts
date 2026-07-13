@@ -5,43 +5,11 @@
  */
 import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
 import fcose from "cytoscape-fcose";
+import { SEMANTIC_EDGE_TYPES, edgeColor, edgeLineStyle, nodeColor, nodeShape } from "./node-style";
 import type { FilterState, GraphEdge, GraphNode } from "./protocol";
 import type { ContextHighlight, GraphPatchView, GraphRenderer } from "./renderer";
 
 cytoscape.use(fcose);
-
-const NODE_COLORS: Record<string, string> = {
-  instruction: "#c586c0",
-  document: "#4fc1ff",
-  missing: "#f14c4c",
-  external: "#89d185",
-  "source-file": "#dcdcaa",
-  directory: "#8a8a8a",
-};
-
-function nodeColor(type: string): string {
-  return NODE_COLORS[type] ?? "#cccccc";
-}
-
-function nodeShape(type: string): string {
-  if (type === "instruction") return "diamond";
-  if (type === "directory") return "round-rectangle";
-  if (type === "missing") return "hexagon";
-  return "ellipse";
-}
-
-function edgeColor(type: string): string {
-  if (type === "broken-ref") return "#f14c4c";
-  if (type === "wiki-link") return "#dcdcaa";
-  if (type === "references") return "#89d185";
-  return "#888888";
-}
-
-function edgeLineStyle(type: string, origin: string): "solid" | "dashed" | "dotted" {
-  if (type === "broken-ref" || origin === "inferred") return "dashed";
-  if (type === "wiki-link") return "dotted";
-  return "solid";
-}
 
 function toNodeDefinition(n: GraphNode): ElementDefinition {
   return {
@@ -68,6 +36,7 @@ function toEdgeDefinition(e: GraphEdge): ElementDefinition {
       origin: e.provenance.origin,
       color: edgeColor(e.type),
       lineStyle: edgeLineStyle(e.type, e.provenance.origin),
+      semantic: SEMANTIC_EDGE_TYPES.has(e.type) ? 1 : 0,
     },
   };
 }
@@ -143,6 +112,18 @@ export class CytoscapeRenderer implements GraphRenderer {
         {
           selector: "edge[type = 'broken-ref']",
           style: { width: 1.5 },
+        },
+        // Direction is semantic for scope edges (overrides, uses-skill, …)
+        {
+          selector: "edge[semantic = 1]",
+          style: {
+            "curve-style": "bezier",
+            "target-arrow-shape": "triangle",
+            "target-arrow-color": "data(color)",
+            "arrow-scale": 0.7,
+            "line-opacity": 0.85,
+            width: 1.5,
+          },
         },
         {
           selector: "node:selected",

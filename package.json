@@ -42,8 +42,10 @@
     "onCommand:contextloom.findLooseThreads",
     "onCommand:contextloom.refreshGraph",
     "onCommand:contextloom.exportGraph",
+    "onCommand:contextloom.showAgentContext",
     "onView:contextloom.graphRoots",
     "onView:contextloom.looseThreads",
+    "onView:contextloom.agentsSkills",
     "onView:contextloom.graphOutline",
     "onWebviewPanel:contextloom.loom"
   ],
@@ -88,6 +90,11 @@
       {
         "command": "contextloom.exportGraph",
         "title": "ContextLoom: Export Graph (JSON)"
+      },
+      {
+        "command": "contextloom.showAgentContext",
+        "title": "ContextLoom: Show Applicable Agent Context",
+        "icon": "$(law)"
       }
     ],
     "menus": {
@@ -96,6 +103,11 @@
           "command": "contextloom.openGraphForFolder",
           "when": "explorerResourceIsFolder",
           "group": "navigation@90"
+        },
+        {
+          "command": "contextloom.showAgentContext",
+          "when": "!explorerResourceIsFolder",
+          "group": "navigation@91"
         }
       ],
       "editor/title": [
@@ -105,10 +117,16 @@
           "group": "navigation"
         }
       ],
+      "editor/context": [
+        {
+          "command": "contextloom.showAgentContext",
+          "group": "navigation@91"
+        }
+      ],
       "view/title": [
         {
           "command": "contextloom.refreshGraph",
-          "when": "view == contextloom.graphRoots || view == contextloom.looseThreads || view == contextloom.graphOutline",
+          "when": "view == contextloom.graphRoots || view == contextloom.looseThreads || view == contextloom.agentsSkills || view == contextloom.graphOutline",
           "group": "navigation"
         }
       ]
@@ -133,11 +151,21 @@
           "name": "Loose Threads — orphans & broken links"
         },
         {
+          "id": "contextloom.agentsSkills",
+          "name": "Agents & Skills"
+        },
+        {
           "id": "contextloom.graphOutline",
           "name": "Graph Outline"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "contextloom.agentsSkills",
+        "contents": "No agents, skills, commands, or rules found.\nResources under .claude/ and .cursor/rules/ appear here after indexing.\n[Open Graph](command:contextloom.openGraph)"
+      }
+    ],
     "configuration": {
       "title": "ContextLoom",
       "properties": {

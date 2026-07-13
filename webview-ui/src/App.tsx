@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { AgentContextTab, EdgeDetails, InspectorTabs, NodeDetails } from "./inspector";
+import { nodeColor } from "./node-style";
 import {
   ContextAppliesToPayload,
   type ContextDetails,
@@ -319,6 +320,7 @@ export function App() {
               onClick={() => toggleNodeType(t)}
               title={`Toggle ${t}`}
             >
+              <span class="dot" aria-hidden="true" style={{ background: nodeColor(t) }} />
               {t}
             </button>
           ))}

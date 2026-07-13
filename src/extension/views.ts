@@ -236,6 +236,14 @@ function iconForType(type?: string): string {
       return "markdown";
     case "instruction":
       return "law";
+    case "agent":
+      return "hubot";
+    case "skill":
+      return "tools";
+    case "command":
+      return "terminal";
+    case "config":
+      return "gear";
     case "missing":
       return "warning";
     case "external":
@@ -247,4 +255,92 @@ function iconForType(type?: string): string {
     default:
       return "circle-outline";
   }
+}
+
+/** Agents & Skills view (PLAN H.1): agents, skills, commands, rules with descriptions. */
+export class AgentsSkillsProvider implements vscode.TreeDataProvider<AgentSkillItem> {
+  private readonly _onDidChange = new vscode.EventEmitter<AgentSkillItem | undefined>();
+  readonly onDidChangeTreeData = this._onDidChange.event;
+
+  constructor(private readonly indexer: IndexerService) {
+    indexer.onDidUpdate(() => this._onDidChange.fire(undefined));
+  }
+
+  getTreeItem(element: AgentSkillItem): vscode.TreeItem {
+    if (element.kind === "group") {
+      const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.Expanded);
+      item.iconPath = new vscode.ThemeIcon(element.icon ?? "list-unordered");
+      return item;
+    }
+    const node = element.node!;
+    const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.None);
+    item.description =
+      typeof node.metadata.description === "string" ? node.metadata.description : "";
+    item.tooltip = node.path;
+    item.iconPath = new vscode.ThemeIcon(iconForType(element.iconType ?? node.type));
+    if (node.path) item.resourceUri = vscode.Uri.file(node.path);
+    item.command = {
+      command: "contextloom._revealNode",
+      title: "Reveal in graph",
+      arguments: [node.id],
+    };
+    if (node.metadata.shadowedBySkill === true) {
+      item.description = `${item.description} (shadowed by skill)`.trim();
+    }
+    return item;
+  }
+
+  getChildren(element?: AgentSkillItem): AgentSkillItem[] {
+    if (element) return element.children ?? [];
+    const store = this.indexer.store;
+    if (!store) return [];
+
+    const nodes = store.allNodes();
+    const groups: AgentSkillItem[] = [];
+    const push = (label: string, icon: string, members: ContextNode[], iconType?: string) => {
+      if (members.length === 0) return;
+      groups.push({
+        kind: "group",
+        label: `${label} (${members.length})`,
+        icon,
+        children: members
+          .slice()
+          .sort((a, b) => a.label.localeCompare(b.label))
+          .map((node) => ({ kind: "leaf" as const, label: node.label, node, iconType })),
+      });
+    };
+
+    push(
+      "Agents",
+      "hubot",
+      nodes.filter((n) => n.type === "agent"),
+    );
+    push(
+      "Skills",
+      "tools",
+      nodes.filter((n) => n.type === "skill"),
+    );
+    push(
+      "Commands",
+      "terminal",
+      nodes.filter((n) => n.type === "command"),
+    );
+    push(
+      "Rules",
+      "checklist",
+      nodes.filter((n) => n.type === "instruction" && n.metadata.format === "claude-rules"),
+      "instruction",
+    );
+    // Empty ⇒ [] so the viewsWelcome content shows.
+    return groups;
+  }
+}
+
+interface AgentSkillItem {
+  kind: "group" | "leaf";
+  label: string;
+  icon?: string;
+  iconType?: string;
+  node?: ContextNode;
+  children?: AgentSkillItem[];
 }
