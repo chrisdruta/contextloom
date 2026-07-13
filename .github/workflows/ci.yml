@@ -29,8 +29,43 @@ jobs:
       - name: Build
         run: bun run build
 
+  integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Build extension and tests
+        run: |
+          bun run build
+          bun run scripts/build-tests.ts
+      - name: Integration tests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a bunx vscode-test
+      - name: Integration tests (Windows)
+        if: runner.os == 'Windows'
+        run: bunx vscode-test
+
+  commit-lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR title follows conventional commits
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$TITLE" | grep -qE '^(feat|fix|docs|chore|refactor|perf|test|build|ci|style|revert)(\([a-z0-9-]+\))?!?: .+' \
+            || { echo "PR title must follow conventional commits (e.g. 'feat: add x')"; exit 1; }
+
   package:
-    needs: test
+    needs: [test, integration]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
