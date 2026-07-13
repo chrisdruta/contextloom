@@ -86,7 +86,6 @@ export class CytoscapeRenderer implements GraphRenderer {
   private selectHandler?: (sel: { nodeId?: string; edgeId?: string }) => void;
   private openHandler?: (node: GraphNode) => void;
   private ro?: ResizeObserver;
-  private hadFirstLayout = false;
   private lastOpenAt = 0;
   private readonly reducedMotion =
     typeof window !== "undefined" &&
@@ -203,15 +202,38 @@ export class CytoscapeRenderer implements GraphRenderer {
     const cy = this.cy;
     if (!cy) return;
     this.nodesById = new Map(nodes.map((n) => [n.id, n]));
+
+    // setGraph rebuilds all elements (Refresh, re-root, cap re-snapshots).
+    // Preserve surviving positions so a same-graph refresh keeps the mental
+    // map instead of re-laying out from a pile at the origin.
+    const prevPositions = new Map<string, { x: number; y: number }>();
+    const prevNodes = cy.nodes();
+    for (let i = 0; i < prevNodes.length; i++) {
+      const n = prevNodes[i];
+      if (n) prevPositions.set(n.id(), { ...n.position() });
+    }
+
+    let survivors = 0;
     cy.batch(() => {
       cy.elements().remove();
       cy.add(nodes.map(toNodeDefinition));
       const ids = new Set(nodes.map((n) => n.id));
       cy.add(edges.filter((e) => ids.has(e.source) && ids.has(e.target)).map(toEdgeDefinition));
+      for (const n of nodes) {
+        const prev = prevPositions.get(n.id);
+        if (prev) {
+          cy.getElementById(n.id).position(prev);
+          survivors++;
+        }
+      }
       this.applyFilterClasses();
     });
-    this.runLayout(!this.hadFirstLayout);
-    this.hadFirstLayout = true;
+
+    // Fresh view (first load or mostly-different graph, e.g. root change):
+    // randomize and fit. Continuous view (refresh of the same graph): keep
+    // positions and camera.
+    const fresh = prevPositions.size === 0 || survivors < nodes.length / 2;
+    this.runLayout(fresh);
   }
 
   applyPatch(patch: GraphPatchView): void {
@@ -357,58 +379,61 @@ export class CytoscapeRenderer implements GraphRenderer {
     }
   }
 
-  private runLayout(firstRun: boolean): void {
+  private runLayout(fresh: boolean): void {
     const cy = this.cy;
     if (!cy) return;
     const visible = cy.elements().not(".hidden");
     if (visible.length === 0) return;
-    if (firstRun) {
-      // `fit` zooms small graphs in until they fill the viewport; clamp to a
-      // sane reading zoom once the layout settles.
-      cy.one("layoutstop", () => {
-        if (cy.zoom() > 1.1) {
-          cy.zoom(1.1);
-          cy.center(visible);
-        }
-      });
-    }
+
+    // Fit manually after the layout settles instead of via the layout's own
+    // `fit` option — fcose's animated fit lands after `layoutstop`, so a
+    // clamp attached there raced it and lost. Manual fit-then-clamp is
+    // deterministic, and `.one()` on the layout object scopes it to this run
+    // (patch-neighborhood layouts never re-fit the camera).
+    const fitAndClamp = () => {
+      cy.fit(visible, 50);
+      if (cy.zoom() > 1.1) {
+        cy.zoom(1.1);
+        cy.center(visible);
+      }
+    };
+
     // ADR-001 bake-off: full fcose is ~0.4 s at 500 nodes but ~5 s at 2k and
     // ~33 s at 5k. Above the threshold fall back to concentric (11-40 ms
     // measured at 500-5k) — the plan's §Q degradation ladder, step 3.
     const FCOSE_MAX_NODES = 1500;
     if (visible.nodes().length > FCOSE_MAX_NODES) {
-      visible
-        .layout({
-          name: "concentric",
-          ...({ animate: false, fit: firstRun, avoidOverlap: false } as Record<string, unknown>),
-        })
-        .run();
+      const layout = visible.layout({
+        name: "concentric",
+        ...({ animate: false, fit: false, avoidOverlap: false } as Record<string, unknown>),
+      });
+      if (fresh) layout.one("layoutstop", fitAndClamp);
+      layout.run();
       return;
     }
-    visible
-      .layout({
-        name: "fcose",
-        // fcose options are untyped; they pass through to the extension.
-        ...({
-          quality: "default",
-          randomize: firstRun,
-          animate: !this.reducedMotion,
-          animationDuration: 300,
-          fit: firstRun,
-          padding: 50,
-          nodeRepulsion: 6000,
-          idealEdgeLength: 110,
-          // Labels sit to the right of nodes and are ~10x wider than the
-          // node itself; without this the layout packs nodes by their 16px
-          // circles and every label overlaps its neighbor.
-          nodeDimensionsIncludeLabels: true,
-          // Zero-degree nodes (orphan docs, missing targets) are tiled into
-          // a grid; pad the tiles so labels stay readable.
-          tile: true,
-          tilingPaddingVertical: 16,
-          tilingPaddingHorizontal: 16,
-        } as Record<string, unknown>),
-      })
-      .run();
+    const layout = visible.layout({
+      name: "fcose",
+      // fcose options are untyped; they pass through to the extension.
+      ...({
+        quality: "default",
+        randomize: fresh,
+        animate: !this.reducedMotion,
+        animationDuration: 300,
+        fit: false,
+        nodeRepulsion: 6000,
+        idealEdgeLength: 110,
+        // Labels sit to the right of nodes and are ~10x wider than the
+        // node itself; without this the layout packs nodes by their 16px
+        // circles and every label overlaps its neighbor.
+        nodeDimensionsIncludeLabels: true,
+        // Zero-degree nodes (orphan docs, missing targets) are tiled into
+        // a grid; pad the tiles so labels stay readable.
+        tile: true,
+        tilingPaddingVertical: 16,
+        tilingPaddingHorizontal: 16,
+      } as Record<string, unknown>),
+    });
+    if (fresh) layout.one("layoutstop", fitAndClamp);
+    layout.run();
   }
 }
