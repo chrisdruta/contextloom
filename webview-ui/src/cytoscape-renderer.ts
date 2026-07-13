@@ -363,6 +363,16 @@ export class CytoscapeRenderer implements GraphRenderer {
     if (!cy) return;
     const visible = cy.elements().not(".hidden");
     if (visible.length === 0) return;
+    if (firstRun) {
+      // `fit` zooms small graphs in until they fill the viewport; clamp to a
+      // sane reading zoom once the layout settles.
+      cy.one("layoutstop", () => {
+        if (cy.zoom() > 1.1) {
+          cy.zoom(1.1);
+          cy.center(visible);
+        }
+      });
+    }
     // ADR-001 bake-off: full fcose is ~0.4 s at 500 nodes but ~5 s at 2k and
     // ~33 s at 5k. Above the threshold fall back to concentric (11-40 ms
     // measured at 500-5k) — the plan's §Q degradation ladder, step 3.
@@ -386,8 +396,18 @@ export class CytoscapeRenderer implements GraphRenderer {
           animate: !this.reducedMotion,
           animationDuration: 300,
           fit: firstRun,
+          padding: 50,
           nodeRepulsion: 6000,
-          idealEdgeLength: 80,
+          idealEdgeLength: 110,
+          // Labels sit to the right of nodes and are ~10x wider than the
+          // node itself; without this the layout packs nodes by their 16px
+          // circles and every label overlaps its neighbor.
+          nodeDimensionsIncludeLabels: true,
+          // Zero-degree nodes (orphan docs, missing targets) are tiled into
+          // a grid; pad the tiles so labels stay readable.
+          tile: true,
+          tilingPaddingVertical: 16,
+          tilingPaddingHorizontal: 16,
         } as Record<string, unknown>),
       })
       .run();
