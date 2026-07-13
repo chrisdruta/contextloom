@@ -105,7 +105,6 @@ export class CytoscapeRenderer implements GraphRenderer {
       elements: [],
       minZoom: 0.1,
       maxZoom: 4,
-      wheelSensitivity: 0.2,
       pixelRatio: window.devicePixelRatio || 1,
       style: [
         {
