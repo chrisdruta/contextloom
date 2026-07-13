@@ -123,6 +123,56 @@ export const ViewFiltersPayload = z.object({
   showExternal: z.boolean(),
 });
 
+// Agent context (v0.2) — additive, protocol version unchanged: both sides
+// ignore unknown message types, and no existing payload schema changes.
+
+/** Wire form of a ScopeMatch, enriched with sourceLabel for direct rendering. */
+export const ScopeMatchWire = z.object({
+  source: z.string().min(1).max(4096),
+  sourcePath: z.string().max(4096),
+  sourceLabel: z.string().max(512).optional(),
+  // string, not enum: v0.3 adds copilot/windsurf without a protocol change
+  format: z.string().max(64),
+  mechanism: z.enum(["ancestry", "glob", "always", "model-decision", "manual"]),
+  status: z.enum(["active", "shadowed", "conditional"]),
+  rank: z.number(),
+  reason: z.string().max(1024),
+  confidence: z.number(),
+  via: z.object({ importedFrom: z.string().max(4096), depth: z.number() }).optional(),
+});
+
+export const ScopeMatchGroupWire = z.object({
+  format: z.string().max(64),
+  matches: z.array(ScopeMatchWire).max(500),
+  note: z.string().max(1024).optional(),
+});
+
+/** webview → host: request agent context for a node or a bare path. */
+export const ContextRequestPayload = z
+  .object({
+    nodeId: z.string().min(1).max(4096).optional(),
+    filePath: z.string().min(1).max(4096).optional(),
+  })
+  .refine((value) => Boolean(value.nodeId) !== Boolean(value.filePath));
+
+/** host → webview: resolved context for a subject file. */
+export const ContextDetailsPayload = z.object({
+  subject: z.object({
+    filePath: z.string().max(4096),
+    nodeId: z.string().max(4096).optional(),
+  }),
+  groups: z.array(ScopeMatchGroupWire).max(20),
+  /** true ⇒ webview switches the Inspector to the Agent Context tab. */
+  reveal: z.boolean().optional(),
+});
+
+/** host → webview: reverse lookup for an instruction-family selection. */
+export const ContextAppliesToPayload = z.object({
+  sourceNodeId: z.string().min(1).max(4096),
+  subjectNodeIds: z.array(z.string().max(4096)).max(2000),
+  truncated: z.boolean().optional(),
+});
+
 export function makeEnvelope(type: string, payload: unknown, id?: string): Envelope {
   return {
     v: PROTOCOL_VERSION,

@@ -4,9 +4,11 @@ import { isAbsolute, relative, sep } from "node:path";
 import * as vscode from "vscode";
 import { exportGraphJson } from "../export/export";
 import type { IndexerService } from "../extension/indexer";
+import { filesInScope, resolveContext } from "../scope/resolve";
 import type { SettingsService } from "../settings/service";
 import { normalizeWorkspaceRelativePath } from "../shared/paths";
 import {
+  ContextRequestPayload,
   type Envelope,
   GraphPatchPayload,
   GraphSnapshotPayload,
@@ -20,6 +22,10 @@ import {
   makeEnvelope,
   parseEnvelope,
 } from "../shared/protocol";
+import { toWireGroups } from "./context-bridge";
+
+const INSTRUCTION_FAMILY = new Set(["instruction", "agent", "skill", "command"]);
+const APPLIES_TO_CAP = 2000;
 
 export class LoomPanel {
   public static readonly viewType = "contextloom.loom";
@@ -132,6 +138,64 @@ export class LoomPanel {
     this.post(makeEnvelope("view/focus", { nodeId }));
   }
 
+  /** Host-initiated: resolve and reveal agent context for a workspace file. */
+  showAgentContext(relPath: string): void {
+    this.postContext({ filePath: relPath }, undefined, true);
+  }
+
+  /**
+   * Answer a context request. File subjects get context/details (the resolved
+   * groups); instruction-family nodes additionally get context/appliesTo (the
+   * reverse set for on-selection highlighting). Subjects need not be indexed —
+   * a bare .ts path is the canonical case.
+   */
+  private postContext(
+    payload: { nodeId?: string; filePath?: string },
+    reqId?: string,
+    reveal = false,
+  ): void {
+    const store = this.indexer.store;
+    const scopeIndex = this.indexer.scopeIndex;
+    if (!store || !scopeIndex) return;
+
+    let filePath: string | null = null;
+    if (payload.nodeId) {
+      const node = store.getNode(payload.nodeId);
+      if (!node?.path) return;
+      filePath = node.path;
+      if (INSTRUCTION_FAMILY.has(node.type)) {
+        const subjects = filesInScope(node.id, scopeIndex, store.allFilePaths());
+        const subjectNodeIds = subjects
+          .map((p) => store.pathToId(p))
+          .filter((id): id is string => Boolean(id))
+          .slice(0, APPLIES_TO_CAP);
+        this.post(
+          makeEnvelope("context/appliesTo", {
+            sourceNodeId: node.id,
+            subjectNodeIds,
+            truncated: subjects.length > APPLIES_TO_CAP || undefined,
+          }),
+        );
+      }
+    } else if (payload.filePath) {
+      filePath = normalizeWorkspaceRelativePath(payload.filePath);
+    }
+    if (filePath === null) return;
+
+    const groups = resolveContext(filePath, scopeIndex);
+    this.post(
+      makeEnvelope(
+        "context/details",
+        {
+          subject: { filePath, nodeId: store.pathToId(filePath) },
+          groups: toWireGroups(groups, (id) => store.getNode(id)?.label),
+          reveal: reveal || undefined,
+        },
+        reqId,
+      ),
+    );
+  }
+
   private async onMessage(raw: unknown): Promise<void> {
     const env = parseEnvelope(raw);
     if (!env) return;
@@ -156,6 +220,12 @@ export class LoomPanel {
         const p = NodeDetailsPayload.safeParse(env.payload);
         if (!p.success) return;
         this.postDetails(p.data.nodeId, p.data.edgeId, env.id);
+        break;
+      }
+      case "context/request": {
+        const p = ContextRequestPayload.safeParse(env.payload);
+        if (!p.success) return;
+        this.postContext(p.data, env.id);
         break;
       }
       case "view/search": {
