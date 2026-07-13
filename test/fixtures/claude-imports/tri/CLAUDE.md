@@ -1,0 +1,3 @@
+# Tri root
+
+@./x.md

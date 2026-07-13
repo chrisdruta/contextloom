@@ -1,4 +1,3 @@
-import { fileId } from "../shared/ids";
 import { basename, dirname } from "../shared/paths";
 import type {
   ContextNode,
@@ -6,8 +5,8 @@ import type {
   ParseResult,
   Provenance,
   RawReference,
-  SourceRange,
 } from "../shared/types";
+import { extractAtImports } from "./at-imports";
 import { MarkdownParser } from "./markdown";
 import type { ContextParser, ParseContext } from "./types";
 
@@ -95,7 +94,7 @@ export class InstructionFileParser implements ContextParser {
     const references: RawReference[] = [...base.references];
     if (format === "claude-md") {
       for (const imp of extractAtImports(text, file.path)) {
-        references.push(imp);
+        references.push({ kind: "import", rawTarget: imp.rawTarget, range: imp.range });
       }
     }
 
@@ -118,70 +117,4 @@ export class InstructionFileParser implements ContextParser {
       scopeRules,
     };
   }
-}
-
-/** Extract @path imports (Claude Code style), max depth handled by resolver later. */
-function extractAtImports(source: string, path: string): RawReference[] {
-  const refs: RawReference[] = [];
-  const lines = source.split("\n");
-  let offset = 0;
-  let inFence = false;
-
-  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
-    const line = lines[lineIdx]!;
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence;
-      offset += line.length + 1;
-      continue;
-    }
-    if (inFence) {
-      offset += line.length + 1;
-      continue;
-    }
-
-    // Skip lines that are only inline code-ish; match @path not in `code`
-    const re = /@([^\s`]+)/g;
-    let m: RegExpExecArray | null;
-    // Simple: skip if line has odd number of backticks before match — use mask
-    const codeSpans = maskBackticks(line);
-
-    for (;;) {
-      m = re.exec(line);
-      if (m === null) break;
-      if (codeSpans[m.index]) continue;
-      const target = m[1]!;
-      // Skip email-like and bare @mentions without path chars
-      if (!target.includes("/") && !target.includes(".") && !target.endsWith(".md")) {
-        // Still allow @AGENTS.md style
-        if (!/\.(md|mdc|txt|json)$/i.test(target)) continue;
-      }
-      const start = m.index;
-      const end = start + m[0].length;
-      refs.push({
-        kind: "import",
-        rawTarget: target,
-        range: {
-          path,
-          start: { line: lineIdx + 1, column: start + 1, offset: offset + start },
-          end: { line: lineIdx + 1, column: end + 1, offset: offset + end },
-        },
-      });
-    }
-    offset += line.length + 1;
-  }
-  return refs;
-}
-
-function maskBackticks(line: string): boolean[] {
-  const mask = new Array(line.length).fill(false);
-  let inCode = false;
-  for (let i = 0; i < line.length; i++) {
-    if (line[i] === "`") {
-      inCode = !inCode;
-      mask[i] = true;
-    } else if (inCode) {
-      mask[i] = true;
-    }
-  }
-  return mask;
 }

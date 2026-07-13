@@ -16,11 +16,12 @@ import type {
   RawReference,
   SourceRange,
 } from "../shared/types";
+import { extractAtImports } from "./at-imports";
 import type { ContextParser, ParseContext } from "./types";
 import { extractWikiLinks } from "./wiki-link";
 
 export const MARKDOWN_PARSER_ID = "markdown";
-export const MARKDOWN_PARSER_VERSION = 1;
+export const MARKDOWN_PARSER_VERSION = 2;
 
 const PROV = (confidence = 1): Provenance => ({
   parserId: MARKDOWN_PARSER_ID,
@@ -169,6 +170,11 @@ export class MarkdownParser implements ContextParser {
     const label = title ?? firstH1 ?? basename(file.path);
     const subtype = classifyDocument(file.path);
 
+    // @import candidates are metadata only: Claude Code expands imports
+    // recursively through any imported file, so the import analysis needs
+    // them for every document — but plain docs must not grow @mention edges.
+    const atImports = extractAtImports(text, file.path);
+
     nodes.push({
       id: fileId(file.path),
       type: "document",
@@ -183,6 +189,7 @@ export class MarkdownParser implements ContextParser {
         subtype,
         entryPoint: isEntryPoint(file.path, subtype),
         externalLinkCount: 0, // filled by resolver later via patch if needed
+        atImports: atImports.length > 0 ? atImports : undefined,
       },
       provenance: PROV(),
       cacheable: true,
