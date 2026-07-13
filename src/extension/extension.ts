@@ -2,6 +2,8 @@ import * as vscode from "vscode";
 import { DiagnosticsPublisher } from "../diagnostics/publisher";
 import { exportGraphJson } from "../export/export";
 import type { GraphStore } from "../graph/store";
+import { resolveContext } from "../scope/resolve";
+import type { ScopeMatchGroup } from "../scope/types";
 import { SettingsService } from "../settings/service";
 import { normalizeWorkspaceRelativePath } from "../shared/paths";
 import type { ParserDiagnostic } from "../shared/types";
@@ -25,6 +27,7 @@ export interface ContextLoomTestApi {
   exportJson(): string | null;
   search(query: string): string[];
   getDiagnostics(): ParserDiagnostic[];
+  resolveContext(filePath: string): ScopeMatchGroup[];
   onDidUpdate: IndexerService["onDidUpdate"];
 }
 
@@ -213,6 +216,8 @@ export function activate(context: vscode.ExtensionContext): ContextLoomTestApi {
       indexer!.store ? exportGraphJson(indexer!.store, indexer!.currentRoot) : null,
     search: (query) => indexer!.search(query),
     getDiagnostics: () => indexer!.diagnosticsList,
+    resolveContext: (filePath) =>
+      indexer!.scopeIndex ? resolveContext(filePath, indexer!.scopeIndex) : [],
     onDidUpdate: indexer.onDidUpdate,
   };
   return api;

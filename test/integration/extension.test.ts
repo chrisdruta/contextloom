@@ -18,6 +18,7 @@ const PUBLIC_COMMANDS = [
   "contextloom.findLooseThreads",
   "contextloom.refreshGraph",
   "contextloom.exportGraph",
+  "contextloom.showAgentContext",
 ];
 
 function workspaceRoot(): string {
@@ -163,5 +164,30 @@ describe("ContextLoom integration", () => {
     const api = await getApi();
     await vscode.commands.executeCommand("contextloom.openGraph");
     await waitFor(() => api.getStore() !== null, 20_000, "graph built via command");
+  });
+
+  it("resolves agent context with nearest-wins AGENTS.md semantics", async () => {
+    const api = await getApi();
+    if (!api.getStore()) await api.openRoot("");
+    const groups = api.resolveContext("packages/api/README.md");
+    const agents = groups.find((g) => g.format === "agents-md");
+    assert.ok(agents, "agents-md group present");
+    assert.strictEqual(agents.matches[0]!.sourcePath, "packages/api/AGENTS.md");
+    assert.strictEqual(agents.matches[0]!.status, "active");
+    assert.strictEqual(agents.matches[1]!.sourcePath, "AGENTS.md");
+    assert.strictEqual(agents.matches[1]!.status, "shadowed");
+  });
+
+  it("showAgentContext command runs from an open editor", async function () {
+    this.timeout(30_000);
+    const api = await getApi();
+    if (!api.getStore()) await api.openRoot("");
+    const doc = await vscode.workspace.openTextDocument(
+      vscode.Uri.file(path.join(workspaceRoot(), "packages", "api", "README.md")),
+    );
+    await vscode.window.showTextDocument(doc);
+    // Must not throw; opens/reveals the Loom panel with the Agent Context tab.
+    await vscode.commands.executeCommand("contextloom.showAgentContext");
+    assert.ok(api.getStore(), "store present after command");
   });
 });

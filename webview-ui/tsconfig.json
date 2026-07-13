@@ -16,7 +16,12 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "types": []
+    "types": ["vitest"]
   },
-  "include": ["src/**/*", "../src/shared/protocol.ts", "../src/shared/types.ts"]
+  "include": [
+    "src/**/*",
+    "../src/shared/protocol.ts",
+    "../src/shared/types.ts",
+    "../test/webview/**/*"
+  ]
 }

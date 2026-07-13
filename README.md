@@ -22,6 +22,16 @@ Point it at a repo (or a subdirectory like `/docs`) and it renders Markdown docu
 - Graph Outline (accessibility path — full keyboard / screen-reader tree)
 - Deterministic JSON export
 
+## Agent Context (v0.2)
+
+- **Show Applicable Agent Context** — select any file (a `.ts` source is the canonical case) and see exactly which instructions govern it, per format, with the reason: nearest-wins `AGENTS.md` (or merge mode), root→leaf-concatenated `CLAUDE.md` with `@import` expansion, glob-activated `.claude/rules` and skills, Cursor rule modes
+- **`.claude/` directory parsing** — agents (frontmatter identity, `skills:` resolution), skills (+ supporting-file containment), commands, rules, `settings.json` (key names only, never values)
+- **Cursor rules** — `.cursor/rules/**/*.mdc` (4 activation modes, tolerant frontmatter) + legacy `.cursorrules`
+- **`@import` validation** — recursive expansion with Claude Code's depth-4 limit and cycle detection (Problems-panel errors)
+- **Agents & Skills view** — every agent, skill, command, and rule with its description
+- On-selection highlighting: select a file → its active instruction sources glow; select an instruction → its scope subtree highlights
+- Conflicts are **reported, never resolved**: same-format overlaps are listed in the tool's documented reading order
+
 ## Quick start
 
 ```bash
@@ -45,16 +55,21 @@ Or right-click a folder in the Explorer → **ContextLoom: Open Graph for Folder
 | `ContextLoom: Find Loose Threads` | Focus the orphans & broken-links view |
 | `ContextLoom: Refresh Graph` | Full reindex |
 | `ContextLoom: Export Graph (JSON)` | Deterministic JSON export |
+| `ContextLoom: Show Applicable Agent Context` | Which instructions apply to this file — and why |
 
-## Supported formats (MVP)
+## Supported formats
 
 | Format | Support |
 |---|---|
 | Markdown (`.md`, `.mdc`) | Full links, wiki links, frontmatter, headings |
-| `AGENTS.md` | Typed instruction node + body links |
-| `CLAUDE.md` / `CLAUDE.local.md` | Typed instruction node + `@import` references |
+| `AGENTS.md` | Instruction node; nearest-wins scope resolution (spec) or merge mode |
+| `CLAUDE.md` / `CLAUDE.local.md` | Instruction node; root→leaf concatenation, `@import` expansion (depth ≤ 4, cycle-checked) |
+| `.claude/` | Agents, skills (+ `paths` globs), commands, rules, `settings.json` |
+| Cursor | `.cursor/rules/**/*.mdc` (alwaysApply / globs / description / manual), legacy `.cursorrules` |
 
-**v0.2 (planned):** scope resolution ("which instructions apply to this file?"), `.claude/` agents/skills/commands/rules, Cursor rules.
+**v0.3 (planned):** Copilot and Windsurf/Devin adapters, Weave Health analysis suite.
+
+See [docs/agent-context.md](./docs/agent-context.md) for the verified per-format semantics.
 
 ## Settings
 
@@ -66,6 +81,8 @@ See VS Code Settings under **ContextLoom**. Key options:
 - `contextloom.wikiLinks.enabled` / `resolution` — wiki-link parsing
 - `contextloom.diagnostics.enabled` — Problems panel
 - `contextloom.agents.enabled` — instruction-file recognition
+- `contextloom.agents.agentsMdMode` — `nearest` (agents.md spec) or `merge` (Cursor/VS Code semantics)
+- `contextloom.agents.formats` — enabled format adapters (`agents-md`, `claude`, `cursor`)
 - `contextloom.limits.maxFiles` / `maxFileSizeKb` — safety caps
 
 ## Privacy
@@ -104,9 +121,9 @@ Details: [docs/architecture.md](./docs/architecture.md) · [docs/graph-model.md]
 
 | Version | Focus |
 |---|---|
-| **0.1** | Markdown + instruction-file graph (this release) |
-| **0.2** | Agent context scope resolution, `.claude/`, Cursor |
-| **0.3** | Weave Health analysis suite |
+| **0.1** | Markdown + instruction-file graph |
+| **0.2** | Agent context scope resolution, `.claude/`, Cursor (this release) |
+| **0.3** | Weave Health analysis suite, Copilot/Windsurf adapters, multi-root |
 | **0.4+** | Opt-in LLM features via `vscode.lm` |
 
 Full plan: [PLAN.md](./PLAN.md).

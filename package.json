@@ -308,6 +308,7 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/cytoscape": "^3.31.0",
+    "@types/jsdom": "^28.0.3",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.10.0",
     "@types/vscode": "^1.90.0",
@@ -315,6 +316,7 @@
     "@vscode/test-electron": "^3.0.0",
     "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.28.1",
+    "jsdom": "^29.1.1",
     "mocha": "^11.7.6",
     "ovsx": "^1.0.2",
     "typescript": "^5.7.2",
