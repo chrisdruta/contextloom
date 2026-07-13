@@ -1,5 +1,28 @@
 import { normalizePath } from "./ids";
 
+/**
+ * Normalize a user/client supplied workspace-relative path.
+ * Returns null for absolute paths, NUL bytes, or traversal above the root.
+ */
+export function normalizeWorkspaceRelativePath(input: string): string | null {
+  if (input.includes("\0")) return null;
+
+  const path = input.replace(/\\/g, "/");
+  if (path.startsWith("/") || /^[a-zA-Z]:\//.test(path)) return null;
+
+  const parts: string[] = [];
+  for (const part of path.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (parts.length === 0) return null;
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return parts.join("/");
+}
+
 /** Join workspace-relative segments. */
 export function joinPath(...parts: string[]): string {
   return normalizePath(parts.join("/"));

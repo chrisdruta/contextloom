@@ -7,7 +7,8 @@ mkdirSync("dist", { recursive: true });
 
 const common: esbuild.BuildOptions = {
   bundle: true,
-  sourcemap: true,
+  minify: !watch,
+  sourcemap: watch,
   logLevel: "info",
 };
 

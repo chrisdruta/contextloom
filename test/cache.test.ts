@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -62,10 +62,34 @@ describe("IndexCache", () => {
     const dir = mkdtempSync(join(tmpdir(), "cl-cache-"));
     dirs.push(dir);
     const path = join(dir, "cache.json");
-    const { writeFileSync } = require("node:fs") as typeof import("node:fs");
     writeFileSync(path, "{not json", "utf8");
     const cache = new IndexCache(path);
     cache.load("s", "p");
     expect(cache.get("a", "h", "markdown", 1)).toBeNull();
+  });
+
+  it("rejects structurally invalid cache entries", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cl-cache-"));
+    dirs.push(dir);
+    const path = join(dir, "cache.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        schemaVersion: 1,
+        settingsHash: "s",
+        parserFingerprint: "p",
+        entries: {
+          "a.md": {
+            contentHash: "h",
+            parserId: "markdown",
+            parserVersion: 1,
+            parseResult: { nodes: "not-an-array" },
+          },
+        },
+      }),
+    );
+    const cache = new IndexCache(path);
+    cache.load("s", "p");
+    expect(cache.get("a.md", "h", "markdown", 1)).toBeNull();
   });
 });

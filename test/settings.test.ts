@@ -27,4 +27,14 @@ describe("resolveSettings", () => {
     expect(s.graph.showExternalLinks).toBe(true);
     expect(s.graph.maxNodes).toBe(100);
   });
+
+  it("rejects resource limits above safe caps", () => {
+    const s = resolveSettings({
+      graph: { showExternalLinks: false, maxNodes: 100_000 },
+      limits: { maxFiles: 1_000_000, maxFileSizeKb: 1_000_000 },
+    });
+    expect(s.graph.maxNodes).toBe(3000);
+    expect(s.limits.maxFiles).toBe(20_000);
+    expect(s.limits.maxFileSizeKb).toBe(1024);
+  });
 });

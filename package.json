@@ -5,6 +5,23 @@
   "version": "0.1.0",
   "publisher": "chrisdruta",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chrisdruta/contextloom.git"
+  },
+  "homepage": "https://github.com/chrisdruta/contextloom#readme",
+  "bugs": {
+    "url": "https://github.com/chrisdruta/contextloom/issues"
+  },
+  "files": [
+    "dist/*.js",
+    "media/**",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "PRIVACY.md",
+    "SECURITY.md"
+  ],
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -125,19 +142,28 @@
       "properties": {
         "contextloom.roots": {
           "type": "array",
-          "items": { "type": "string" },
+          "maxItems": 100,
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Saved graph roots (workspace-relative). Empty = workspace root."
         },
         "contextloom.include": {
           "type": "array",
-          "items": { "type": "string" },
+          "maxItems": 200,
+          "items": {
+            "type": "string"
+          },
           "default": ["**/*.md", "**/*.mdc", "**/AGENTS.md", "**/CLAUDE.md", "**/SKILL.md"],
           "description": "Include globs for discovery."
         },
         "contextloom.exclude": {
           "type": "array",
-          "items": { "type": "string" },
+          "maxItems": 200,
+          "items": {
+            "type": "string"
+          },
           "default": [
             "**/node_modules/**",
             "**/.git/**",
@@ -177,8 +203,9 @@
         },
         "contextloom.graph.maxNodes": {
           "type": "number",
+          "maximum": 10000,
           "default": 3000,
-          "description": "View-level cap before degradation ladder engages."
+          "description": "Maximum nodes sent to the graph view."
         },
         "contextloom.diagnostics.enabled": {
           "type": "boolean",
@@ -187,11 +214,13 @@
         },
         "contextloom.limits.maxFiles": {
           "type": "number",
+          "maximum": 100000,
           "default": 20000,
           "description": "Hard indexing cap (explicit skip report)."
         },
         "contextloom.limits.maxFileSizeKb": {
           "type": "number",
+          "maximum": 10240,
           "default": 1024,
           "description": "Skip files larger than this many KB."
         },
@@ -211,7 +240,7 @@
     "lint:fix": "biome check --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "package": "bun run build && vsce package --no-dependencies",
+    "package": "vsce package --no-dependencies",
     "vscode:prepublish": "bun run build"
   },
   "devDependencies": {
@@ -219,9 +248,9 @@
     "@types/node": "^22.10.0",
     "@types/vscode": "^1.90.0",
     "@vscode/vsce": "^3.2.1",
-    "esbuild": "^0.24.0",
+    "esbuild": "^0.28.1",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^4.1.10"
   },
   "dependencies": {
     "github-slugger": "^2.0.0",

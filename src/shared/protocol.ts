@@ -44,9 +44,9 @@ export const ContextEdgeSchema = z.object({
 });
 
 export const EnvelopeSchema = z.object({
-  v: z.number(),
-  id: z.string(),
-  type: z.string(),
+  v: z.number().int(),
+  id: z.string().min(1).max(256),
+  type: z.string().min(1).max(128),
   payload: z.unknown(),
 });
 
@@ -92,22 +92,29 @@ export const SearchResultsPayload = z.object({
 
 // Webview → host
 export const NodeOpenPayload = z.object({
-  path: z.string(),
-  line: z.number().optional(),
-  column: z.number().optional(),
+  path: z.string().min(1).max(4096),
+  line: z.number().int().positive().max(10_000_000).optional(),
+  column: z.number().int().positive().max(10_000_000).optional(),
 });
 
 export const NodeRevealPayload = z.object({
-  path: z.string(),
+  path: z.string().min(1).max(4096),
 });
 
 export const ViewSearchPayload = z.object({
-  query: z.string(),
+  query: z.string().max(1000),
 });
 
+export const NodeDetailsPayload = z
+  .object({
+    nodeId: z.string().min(1).max(4096).optional(),
+    edgeId: z.string().min(1).max(4096).optional(),
+  })
+  .refine((value) => Boolean(value.nodeId) !== Boolean(value.edgeId));
+
 export const ViewFiltersPayload = z.object({
-  hiddenNodeTypes: z.array(z.string()),
-  hiddenEdgeTypes: z.array(z.string()),
+  hiddenNodeTypes: z.array(z.string().max(128)).max(100),
+  hiddenEdgeTypes: z.array(z.string().max(128)).max(100),
   showInferred: z.boolean(),
   showExternal: z.boolean(),
 });

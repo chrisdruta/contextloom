@@ -11,3 +11,6 @@
 - AGENTS.md / CLAUDE.md recognition as typed instruction nodes
 - Content-hash parse cache and debounced file-watcher incremental updates
 - Deterministic JSON graph export
+- Workspace-confined discovery, symlink handling, and webview file operations
+- Bounded cache, protocol, indexing, and graph-rendering resource usage
+- Minimal production VSIX packaging with audited development dependencies

@@ -1,12 +1,17 @@
+import { randomBytes } from "node:crypto";
+import { realpathSync } from "node:fs";
+import { isAbsolute, relative, sep } from "node:path";
 import * as vscode from "vscode";
 import { exportGraphJson } from "../export/export";
 import type { IndexerService } from "../extension/indexer";
 import type { SettingsService } from "../settings/service";
+import { normalizeWorkspaceRelativePath } from "../shared/paths";
 import {
   type Envelope,
   GraphPatchPayload,
   GraphSnapshotPayload,
   type GraphStatusPayload,
+  NodeDetailsPayload,
   NodeOpenPayload,
   NodeRevealPayload,
   SelectionDetailsPayload,
@@ -20,6 +25,7 @@ export class LoomPanel {
   public static current: LoomPanel | undefined;
   private readonly panel: vscode.WebviewPanel;
   private disposables: vscode.Disposable[] = [];
+  private snapshotWasCapped = false;
 
   private constructor(
     panel: vscode.WebviewPanel,
@@ -40,7 +46,9 @@ export class LoomPanel {
 
     this.disposables.push(
       this.indexer.onDidUpdate((ev) => {
-        if (ev.full) {
+        const exceedsViewCap =
+          (this.indexer.store?.nodeCount() ?? 0) > this.settings.settings.graph.maxNodes;
+        if (ev.full || exceedsViewCap || this.snapshotWasCapped) {
           this.postSnapshot();
         } else if (ev.patch) {
           this.post(
@@ -55,6 +63,8 @@ export class LoomPanel {
         }
       }),
       this.indexer.onDidStateChange((s) => {
+        const maxNodes = this.settings.settings.graph.maxNodes;
+        const capped = (s.nodeCount ?? 0) > maxNodes;
         this.post(
           makeEnvelope("graph/status", {
             state:
@@ -65,9 +75,9 @@ export class LoomPanel {
                   : s.state === "degraded"
                     ? "degraded"
                     : "ready",
-            nodeCount: s.nodeCount,
-            edgeCount: s.edgeCount,
-            message: s.message,
+            nodeCount: capped ? maxNodes : s.nodeCount,
+            edgeCount: capped ? undefined : s.edgeCount,
+            message: capped ? `Showing ${maxNodes} of ${s.nodeCount} nodes (view cap)` : s.message,
           } satisfies import("zod").infer<typeof GraphStatusPayload>),
         );
       }),
@@ -115,19 +125,20 @@ export class LoomPanel {
         break;
       case "node/open": {
         const p = NodeOpenPayload.safeParse(env.payload);
-        if (!p.success) return;
+        if (!p.success || !this.isKnownPath(p.data.path)) return;
         await openAt(p.data.path, p.data.line, p.data.column);
         break;
       }
       case "node/reveal": {
         const p = NodeRevealPayload.safeParse(env.payload);
-        if (!p.success) return;
+        if (!p.success || !this.isKnownPath(p.data.path)) return;
         await revealInExplorer(p.data.path);
         break;
       }
       case "node/details": {
-        const payload = env.payload as { nodeId?: string; edgeId?: string };
-        this.postDetails(payload.nodeId, payload.edgeId, env.id);
+        const p = NodeDetailsPayload.safeParse(env.payload);
+        if (!p.success) return;
+        this.postDetails(p.data.nodeId, p.data.edgeId, env.id);
         break;
       }
       case "view/search": {
@@ -157,6 +168,27 @@ export class LoomPanel {
     }
   }
 
+  private isKnownPath(path: string): boolean {
+    const safePath = normalizeWorkspaceRelativePath(path);
+    if (safePath === null || safePath !== path.replace(/\\/g, "/")) return false;
+
+    const store = this.indexer.store;
+    if (!store) return false;
+    if (
+      store
+        .allNodes()
+        .some(
+          (node) =>
+            node.path === safePath && !["missing", "external", "directory"].includes(node.type),
+        )
+    ) {
+      return true;
+    }
+    return store
+      .allEdges()
+      .some((edge) => edge.occurrences.some((occurrence) => occurrence.path === safePath));
+  }
+
   private postSnapshot(): void {
     const store = this.indexer.store;
     if (!store) {
@@ -169,10 +201,27 @@ export class LoomPanel {
       return;
     }
 
+    const maxNodes = this.settings.settings.graph.maxNodes;
+    const allNodes = store.allNodes().sort((a, b) => {
+      const aDirectory = a.type === "directory" ? 1 : 0;
+      const bDirectory = b.type === "directory" ? 1 : 0;
+      return aDirectory - bDirectory || a.id.localeCompare(b.id);
+    });
+    const nodes = allNodes.slice(0, maxNodes);
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const maxEdges = maxNodes * 10;
+    const edges = store
+      .allEdges()
+      .filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .slice(0, maxEdges);
+    const capped = nodes.length < allNodes.length;
+    this.snapshotWasCapped = capped;
+
     const payload = {
       root: this.indexer.currentRoot,
-      nodes: store.allNodes(),
-      edges: store.allEdges(),
+      nodes,
+      edges,
       showExternalLinks: this.settings.settings.graph.showExternalLinks,
     };
     // Validate shape in dev
@@ -181,8 +230,11 @@ export class LoomPanel {
     this.post(
       makeEnvelope("graph/status", {
         state: "ready",
-        nodeCount: store.nodeCount(),
-        edgeCount: store.edgeCount(),
+        nodeCount: nodes.length,
+        edgeCount: edges.length,
+        message: capped
+          ? `Showing ${nodes.length} of ${allNodes.length} nodes (view cap)`
+          : undefined,
       }),
     );
   }
@@ -311,9 +363,8 @@ export class LoomPanel {
 }
 
 async function openAt(relPath: string, line?: number, column?: number): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0];
-  if (!folder) return;
-  const uri = vscode.Uri.joinPath(folder.uri, ...relPath.split("/"));
+  const uri = confinedWorkspaceUri(relPath);
+  if (!uri) return;
   const doc = await vscode.workspace.openTextDocument(uri);
   const editor = await vscode.window.showTextDocument(doc);
   if (line != null) {
@@ -324,15 +375,29 @@ async function openAt(relPath: string, line?: number, column?: number): Promise<
 }
 
 async function revealInExplorer(relPath: string): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0];
-  if (!folder) return;
-  const uri = vscode.Uri.joinPath(folder.uri, ...relPath.split("/"));
+  const uri = confinedWorkspaceUri(relPath);
+  if (!uri) return;
   await vscode.commands.executeCommand("revealInExplorer", uri);
 }
 
+function confinedWorkspaceUri(relPath: string): vscode.Uri | null {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder || folder.uri.scheme !== "file") return null;
+  const safePath = normalizeWorkspaceRelativePath(relPath);
+  if (safePath === null || safePath !== relPath.replace(/\\/g, "/")) return null;
+
+  const uri = vscode.Uri.joinPath(folder.uri, ...relPath.split("/"));
+  try {
+    const root = realpathSync(folder.uri.fsPath);
+    const target = realpathSync(uri.fsPath);
+    const rel = relative(root, target);
+    if (rel !== "" && (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`))) return null;
+    return uri;
+  } catch {
+    return null;
+  }
+}
+
 function getNonce(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let n = "";
-  for (let i = 0; i < 32; i++) n += chars[Math.floor(Math.random() * chars.length)];
-  return n;
+  return randomBytes(24).toString("base64url");
 }

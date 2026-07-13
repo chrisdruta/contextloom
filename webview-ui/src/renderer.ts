@@ -290,11 +290,12 @@ export class CanvasRenderer implements GraphRenderer {
       p.vx += -p.x * 0.0005;
       p.vy += -p.y * 0.0005;
     }
-    // repulsion
-    for (let i = 0; i < vis.length; i++) {
-      for (let j = i + 1; j < vis.length; j++) {
-        const a = this.positions.get(vis[i]!.id)!;
-        const b = this.positions.get(vis[j]!.id)!;
+    // Bound the quadratic part of the simulation for hostile/very large graphs.
+    const repulsionNodes = vis.slice(0, 400);
+    for (let i = 0; i < repulsionNodes.length; i++) {
+      for (let j = i + 1; j < repulsionNodes.length; j++) {
+        const a = this.positions.get(repulsionNodes[i]!.id)!;
+        const b = this.positions.get(repulsionNodes[j]!.id)!;
         let dx = b.x - a.x;
         let dy = b.y - a.y;
         const dist = Math.hypot(dx, dy) || 1;

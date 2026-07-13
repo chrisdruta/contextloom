@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { DiagnosticsPublisher } from "../diagnostics/publisher";
 import { exportGraphJson } from "../export/export";
 import { SettingsService } from "../settings/service";
+import { normalizeWorkspaceRelativePath } from "../shared/paths";
 import { LoomPanel } from "../webview/panel";
 import { IndexerService } from "./indexer";
 import { GraphOutlineProvider, GraphRootsProvider, LooseThreadsProvider } from "./views";
@@ -49,7 +50,11 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   const openGraph = async (rootArg?: string) => {
-    const root = typeof rootArg === "string" ? rootArg : "";
+    const root = normalizeWorkspaceRelativePath(typeof rootArg === "string" ? rootArg : "");
+    if (root === null) {
+      void vscode.window.showErrorMessage("ContextLoom graph roots must be inside the workspace.");
+      return;
+    }
     rootsProvider.addAdHoc(root);
     LoomPanel.show(context.extensionUri, indexer!, settings);
     await indexer!.openRoot(root);

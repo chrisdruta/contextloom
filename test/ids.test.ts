@@ -8,6 +8,7 @@ import {
   pathFromId,
   urlId,
 } from "../src/shared/ids";
+import { normalizeWorkspaceRelativePath } from "../src/shared/paths";
 
 describe("normalizePath", () => {
   it("normalizes separators and dots", () => {
@@ -18,6 +19,20 @@ describe("normalizePath", () => {
 
   it("does not escape above root", () => {
     expect(normalizePath("../../etc/passwd")).toBe("etc/passwd");
+  });
+});
+
+describe("normalizeWorkspaceRelativePath", () => {
+  it("normalizes safe relative paths", () => {
+    expect(normalizeWorkspaceRelativePath("docs/./guide/../README.md")).toBe("docs/README.md");
+    expect(normalizeWorkspaceRelativePath("docs\\README.md")).toBe("docs/README.md");
+  });
+
+  it("rejects absolute and escaping paths", () => {
+    expect(normalizeWorkspaceRelativePath("../../etc/passwd")).toBeNull();
+    expect(normalizeWorkspaceRelativePath("/etc/passwd")).toBeNull();
+    expect(normalizeWorkspaceRelativePath("C:\\Windows\\system.ini")).toBeNull();
+    expect(normalizeWorkspaceRelativePath("bad\0path.md")).toBeNull();
   });
 });
 

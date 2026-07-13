@@ -1,11 +1,14 @@
-import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import ignore, { type Ignore } from "ignore";
 import picomatch from "picomatch";
 import type { ResolvedSettings } from "../settings/schema";
 import { contentHash } from "../shared/hash";
 import { normalizePath } from "../shared/ids";
+import { normalizeWorkspaceRelativePath } from "../shared/paths";
 import type { FileSnapshot } from "../shared/types";
+
+const MAX_IGNORE_FILE_BYTES = 1024 * 1024;
 
 export interface DiscoveryResult {
   files: FileSnapshot[];
@@ -30,11 +33,31 @@ export interface DiscoverOptions {
  */
 export function discoverFiles(opts: DiscoverOptions): DiscoveryResult {
   const { workspaceRoot, graphRoot, settings } = opts;
-  const absRoot = graphRoot ? join(workspaceRoot, ...graphRoot.split("/")) : workspaceRoot;
-
   const files: FileSnapshot[] = [];
   const skipped: { path: string; reason: string }[] = [];
   let truncated = false;
+
+  const safeGraphRoot = normalizeWorkspaceRelativePath(graphRoot);
+  if (safeGraphRoot === null) {
+    return {
+      files,
+      skipped: [{ path: graphRoot, reason: "outside-workspace" }],
+      truncated: false,
+    };
+  }
+
+  const absWorkspaceRoot = resolve(workspaceRoot);
+  const absRoot = safeGraphRoot
+    ? resolve(absWorkspaceRoot, ...safeGraphRoot.split("/"))
+    : absWorkspaceRoot;
+
+  let realWorkspaceRoot: string;
+  try {
+    realWorkspaceRoot = realpathSync(absWorkspaceRoot);
+  } catch {
+    return { files, skipped: [{ path: graphRoot, reason: "unreadable" }], truncated: false };
+  }
+  const visitedDirectories = new Set<string>();
 
   const includeMatchers = settings.include.map((g) => picomatch(g, { dot: true }));
   const excludeMatchers = [...settings.exclude, ...(opts.vscodeExcludes ?? [])].map((g) =>
@@ -56,6 +79,9 @@ export function discoverFiles(opts: DiscoverOptions): DiscoveryResult {
 
     let entries: string[];
     try {
+      const realDir = realpathSync(dir);
+      if (!isWithin(realWorkspaceRoot, realDir) || visitedDirectories.has(realDir)) return;
+      visitedDirectories.add(realDir);
       entries = readdirSync(dir);
     } catch {
       return;
@@ -67,7 +93,8 @@ export function discoverFiles(opts: DiscoverOptions): DiscoveryResult {
       const giPath = join(dir, ".gitignore");
       if (existsSync(giPath)) {
         try {
-          const content = readFileSync(giPath, "utf8");
+          const content = readIgnoreFile(giPath);
+          if (content === null) throw new Error("oversized .gitignore");
           const relDir = normalizePath(relative(workspaceRoot, dir));
           const child = ignore();
           if (ig) child.add(ig);
@@ -106,6 +133,12 @@ export function discoverFiles(opts: DiscoverOptions): DiscoveryResult {
         }
         // follow carefully
         try {
+          const target = realpathSync(abs);
+          if (!isWithin(realWorkspaceRoot, target)) {
+            const rel = normalizePath(relative(absWorkspaceRoot, abs));
+            skipped.push({ path: rel, reason: "symlink-outside-workspace" });
+            continue;
+          }
           st = statSync(abs);
         } catch {
           continue;
@@ -188,7 +221,8 @@ function loadGitignoreChain(workspaceRoot: string, graphRoot: string): Ignore {
   const rootGi = join(workspaceRoot, ".gitignore");
   if (existsSync(rootGi)) {
     try {
-      ig.add(readFileSync(rootGi, "utf8"));
+      const content = readIgnoreFile(rootGi);
+      if (content !== null) ig.add(content);
     } catch {
       // ignore
     }
@@ -197,4 +231,14 @@ function loadGitignoreChain(workspaceRoot: string, graphRoot: string): Ignore {
   void graphRoot;
   void sep;
   return ig;
+}
+
+function readIgnoreFile(path: string): string | null {
+  if (statSync(path).size > MAX_IGNORE_FILE_BYTES) return null;
+  return readFileSync(path, "utf8");
+}
+
+function isWithin(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
 }

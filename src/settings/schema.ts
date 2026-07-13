@@ -19,9 +19,15 @@ export const DEFAULT_EXCLUDE = [
 ] as const;
 
 export const SettingsSchema = z.object({
-  roots: z.array(z.string()).default([]),
-  include: z.array(z.string()).default([...DEFAULT_INCLUDE]),
-  exclude: z.array(z.string()).default([...DEFAULT_EXCLUDE]),
+  roots: z.array(z.string().max(4096)).max(100).default([]),
+  include: z
+    .array(z.string().max(1024))
+    .max(200)
+    .default([...DEFAULT_INCLUDE]),
+  exclude: z
+    .array(z.string().max(1024))
+    .max(200)
+    .default([...DEFAULT_EXCLUDE]),
   respectGitignore: z.boolean().default(true),
   followSymlinks: z.boolean().default(false),
   wikiLinks: z
@@ -33,7 +39,7 @@ export const SettingsSchema = z.object({
   graph: z
     .object({
       showExternalLinks: z.boolean().default(false),
-      maxNodes: z.number().int().positive().default(3000),
+      maxNodes: z.number().int().positive().max(10_000).default(3000),
     })
     .default({}),
   diagnostics: z
@@ -43,8 +49,8 @@ export const SettingsSchema = z.object({
     .default({}),
   limits: z
     .object({
-      maxFiles: z.number().int().positive().default(20_000),
-      maxFileSizeKb: z.number().int().positive().default(1024),
+      maxFiles: z.number().int().positive().max(100_000).default(20_000),
+      maxFileSizeKb: z.number().int().positive().max(10_240).default(1024),
     })
     .default({}),
   agents: z

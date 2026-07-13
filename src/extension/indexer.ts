@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import * as vscode from "vscode";
 import { type LooseThread, collectLooseThreads } from "../analysis/orphans";
 import { IndexCache, cachePathForStorage } from "../cache/cache";
@@ -9,6 +9,7 @@ import type { GraphStore } from "../graph/store";
 import { ParserRegistry } from "../parsers/registry";
 import type { SettingsService } from "../settings/service";
 import { contentHash } from "../shared/hash";
+import { normalizeWorkspaceRelativePath } from "../shared/paths";
 import type { GraphPatch, ParserDiagnostic } from "../shared/types";
 import type { FileSnapshot } from "../shared/types";
 
@@ -87,7 +88,12 @@ export class IndexerService implements vscode.Disposable {
   }
 
   async openRoot(graphRoot: string): Promise<void> {
-    this.root = graphRoot;
+    const safeRoot = normalizeWorkspaceRelativePath(graphRoot);
+    if (safeRoot === null) {
+      this.setState("error", "Graph root must be inside the workspace");
+      return;
+    }
+    this.root = safeRoot;
     await this.reindex();
   }
 
@@ -204,7 +210,13 @@ export class IndexerService implements vscode.Disposable {
       return;
     }
 
-    const created: FileSnapshot[] = [];
+    // Creation eligibility depends on include/exclude and gitignore chains.
+    // Re-run discovery instead of duplicating those rules in the watcher.
+    if (events.some((event) => event.type === "create")) {
+      await this.reindex("New file — full reindex");
+      return;
+    }
+
     const changed: FileSnapshot[] = [];
     const deleted: string[] = [];
 
@@ -224,15 +236,37 @@ export class IndexerService implements vscode.Disposable {
         deleted.push(rel);
         continue;
       }
+      // Ignore changes to files that discovery intentionally excluded.
+      if (!this.build.refIndex.has(rel)) continue;
       try {
+        let st = lstatSync(ev.uri.fsPath);
+        if (st.isSymbolicLink()) {
+          if (!this.settings.settings.followSymlinks) {
+            deleted.push(rel);
+            continue;
+          }
+          const target = realpathSync(ev.uri.fsPath);
+          if (!isWithin(this.workspaceRoot, target)) {
+            deleted.push(rel);
+            continue;
+          }
+          st = statSync(ev.uri.fsPath);
+        }
+        if (!st.isFile() || st.size > this.settings.settings.limits.maxFileSizeKb * 1024) {
+          deleted.push(rel);
+          continue;
+        }
         const buf = readFileSync(ev.uri.fsPath);
+        if (buf.subarray(0, Math.min(8192, buf.length)).includes(0)) {
+          deleted.push(rel);
+          continue;
+        }
         const snap: FileSnapshot = {
           path: rel,
           contents: new Uint8Array(buf),
           hash: contentHash(new Uint8Array(buf)),
         };
-        if (ev.type === "create") created.push(snap);
-        else changed.push(snap);
+        changed.push(snap);
       } catch {
         // file may have vanished
         deleted.push(rel);
@@ -241,7 +275,7 @@ export class IndexerService implements vscode.Disposable {
 
     const { patch, diagnostics } = applyFileChanges(
       this.build.store,
-      { created, changed, deleted },
+      { created: [], changed, deleted },
       {
         workspaceRoot: this.workspaceRoot,
         settings: this.settings.settings,
@@ -255,10 +289,7 @@ export class IndexerService implements vscode.Disposable {
     // Merge diagnostics for touched files
     this.build.diagnostics = [
       ...this.build.diagnostics.filter(
-        (d) =>
-          !created.some((f) => f.path === d.range.path) &&
-          !changed.some((f) => f.path === d.range.path) &&
-          !deleted.includes(d.range.path),
+        (d) => !changed.some((f) => f.path === d.range.path) && !deleted.includes(d.range.path),
       ),
       ...diagnostics,
     ];
@@ -300,12 +331,14 @@ export class IndexerService implements vscode.Disposable {
 }
 
 function normalizeRel(workspaceRoot: string, absPath: string): string | null {
-  const root = workspaceRoot.replace(/\\/g, "/");
-  const abs = absPath.replace(/\\/g, "/");
-  if (!abs.startsWith(root)) return null;
-  let rel = abs.slice(root.length);
-  if (rel.startsWith("/")) rel = rel.slice(1);
-  return rel;
+  const rel = relative(resolve(workspaceRoot), resolve(absPath));
+  if (rel === "" || isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) return null;
+  return normalizeWorkspaceRelativePath(rel);
+}
+
+function isWithin(workspaceRoot: string, candidate: string): boolean {
+  const rel = relative(realpathSync(workspaceRoot), candidate);
+  return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
 }
 
 function yieldToEventLoop(): Promise<void> {

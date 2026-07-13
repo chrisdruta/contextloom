@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { GraphSnapshotPayload, makeEnvelope, parseEnvelope } from "../src/shared/protocol";
+import {
+  GraphSnapshotPayload,
+  NodeDetailsPayload,
+  NodeOpenPayload,
+  ViewSearchPayload,
+  makeEnvelope,
+  parseEnvelope,
+} from "../src/shared/protocol";
 
 describe("protocol", () => {
   it("round-trips envelopes", () => {
@@ -34,5 +41,13 @@ describe("protocol", () => {
       edges: [],
     });
     expect(r.success).toBe(true);
+  });
+
+  it("bounds and validates webview requests", () => {
+    expect(NodeOpenPayload.safeParse({ path: "docs/a.md", line: 1 }).success).toBe(true);
+    expect(NodeOpenPayload.safeParse({ path: "", line: -1 }).success).toBe(false);
+    expect(ViewSearchPayload.safeParse({ query: "x".repeat(1001) }).success).toBe(false);
+    expect(NodeDetailsPayload.safeParse({ nodeId: "file:a.md" }).success).toBe(true);
+    expect(NodeDetailsPayload.safeParse({ nodeId: "a", edgeId: "b" }).success).toBe(false);
   });
 });
