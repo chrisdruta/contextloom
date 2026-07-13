@@ -1,0 +1,245 @@
+{
+  "name": "contextloom",
+  "displayName": "ContextLoom — Docs & Agent Context Graph",
+  "description": "See how your repository's context is woven together. Navigable knowledge graph for Markdown docs and AI-agent configuration.",
+  "version": "0.1.0",
+  "publisher": "chrisdruta",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Visualization", "Other"],
+  "keywords": [
+    "markdown",
+    "graph",
+    "documentation",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "agent context",
+    "knowledge graph"
+  ],
+  "activationEvents": [
+    "onCommand:contextloom.openGraph",
+    "onCommand:contextloom.openGraphForFolder",
+    "onCommand:contextloom.focusCurrentFile",
+    "onCommand:contextloom.findLooseThreads",
+    "onCommand:contextloom.refreshGraph",
+    "onCommand:contextloom.exportGraph",
+    "onView:contextloom.graphRoots",
+    "onView:contextloom.looseThreads",
+    "onView:contextloom.graphOutline"
+  ],
+  "main": "./dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Indexing and graph work in limited mode; Export and LLM features disabled.",
+      "restrictedConfigurations": [
+        "contextloom.followSymlinks",
+        "contextloom.include",
+        "contextloom.exclude"
+      ]
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "contextloom.openGraph",
+        "title": "ContextLoom: Open Graph",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "contextloom.openGraphForFolder",
+        "title": "ContextLoom: Open Graph for Folder",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "contextloom.focusCurrentFile",
+        "title": "ContextLoom: Focus on Current File",
+        "icon": "$(target)"
+      },
+      {
+        "command": "contextloom.findLooseThreads",
+        "title": "ContextLoom: Find Loose Threads"
+      },
+      {
+        "command": "contextloom.refreshGraph",
+        "title": "ContextLoom: Refresh Graph",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "contextloom.exportGraph",
+        "title": "ContextLoom: Export Graph (JSON)"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "contextloom.openGraphForFolder",
+          "when": "explorerResourceIsFolder",
+          "group": "navigation@90"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "contextloom.focusCurrentFile",
+          "when": "resourceExtname == .md",
+          "group": "navigation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "contextloom.refreshGraph",
+          "when": "view == contextloom.graphRoots || view == contextloom.looseThreads || view == contextloom.graphOutline",
+          "group": "navigation"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "contextloom",
+          "title": "ContextLoom",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "contextloom": [
+        {
+          "id": "contextloom.graphRoots",
+          "name": "Graph Roots"
+        },
+        {
+          "id": "contextloom.looseThreads",
+          "name": "Loose Threads — orphans & broken links"
+        },
+        {
+          "id": "contextloom.graphOutline",
+          "name": "Graph Outline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ContextLoom",
+      "properties": {
+        "contextloom.roots": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Saved graph roots (workspace-relative). Empty = workspace root."
+        },
+        "contextloom.include": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["**/*.md", "**/*.mdc", "**/AGENTS.md", "**/CLAUDE.md", "**/SKILL.md"],
+          "description": "Include globs for discovery."
+        },
+        "contextloom.exclude": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [
+            "**/node_modules/**",
+            "**/.git/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/out/**",
+            "**/vendor/**",
+            "**/coverage/**"
+          ],
+          "description": "Exclude globs (additive to gitignore/VS Code excludes)."
+        },
+        "contextloom.respectGitignore": {
+          "type": "boolean",
+          "default": true,
+          "description": "Honor .gitignore chains during discovery."
+        },
+        "contextloom.followSymlinks": {
+          "type": "boolean",
+          "default": false,
+          "description": "Follow symlinks during discovery."
+        },
+        "contextloom.wikiLinks.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Parse [[wiki links]]."
+        },
+        "contextloom.wikiLinks.resolution": {
+          "type": "string",
+          "enum": ["shortest-unique", "root-relative"],
+          "default": "shortest-unique",
+          "description": "Wiki-link target resolution strategy."
+        },
+        "contextloom.graph.showExternalLinks": {
+          "type": "boolean",
+          "default": false,
+          "description": "Render external URLs as nodes vs collapsed badge."
+        },
+        "contextloom.graph.maxNodes": {
+          "type": "number",
+          "default": 3000,
+          "description": "View-level cap before degradation ladder engages."
+        },
+        "contextloom.diagnostics.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Publish broken-link diagnostics to Problems panel."
+        },
+        "contextloom.limits.maxFiles": {
+          "type": "number",
+          "default": 20000,
+          "description": "Hard indexing cap (explicit skip report)."
+        },
+        "contextloom.limits.maxFileSizeKb": {
+          "type": "number",
+          "default": 1024,
+          "description": "Skip files larger than this many KB."
+        },
+        "contextloom.agents.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Recognize agent instruction formats (AGENTS.md, CLAUDE.md)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "bun run scripts/build.ts",
+    "watch": "bun run scripts/build.ts --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p webview-ui/tsconfig.json",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package": "bun run build && vsce package --no-dependencies",
+    "vscode:prepublish": "bun run build"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "github-slugger": "^2.0.0",
+    "graphology": "^0.25.4",
+    "graphology-types": "^0.24.7",
+    "ignore": "^6.0.2",
+    "mdast-util-from-markdown": "^2.0.2",
+    "mdast-util-frontmatter": "^2.0.1",
+    "mdast-util-gfm": "^3.0.0",
+    "micromark-extension-frontmatter": "^2.0.0",
+    "micromark-extension-gfm": "^3.0.0",
+    "picomatch": "^4.0.2",
+    "preact": "^10.25.2",
+    "yaml": "^2.6.1",
+    "zod": "^3.24.1"
+  },
+  "optionalDependencies": {
+    "cytoscape": "^3.30.4",
+    "cytoscape-fcose": "^2.2.0"
+  }
+}

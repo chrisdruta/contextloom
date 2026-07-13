@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-tsc/
+*.vsix
+.DS_Store
+*.log
+.env
+coverage/
+.vscode-test/
+large-generated/

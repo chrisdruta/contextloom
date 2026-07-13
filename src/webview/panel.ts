@@ -1,0 +1,338 @@
+import * as vscode from "vscode";
+import { exportGraphJson } from "../export/export";
+import type { IndexerService } from "../extension/indexer";
+import type { SettingsService } from "../settings/service";
+import {
+  type Envelope,
+  GraphPatchPayload,
+  GraphSnapshotPayload,
+  type GraphStatusPayload,
+  NodeOpenPayload,
+  NodeRevealPayload,
+  SelectionDetailsPayload,
+  ViewFiltersPayload,
+  ViewSearchPayload,
+  makeEnvelope,
+  parseEnvelope,
+} from "../shared/protocol";
+
+export class LoomPanel {
+  public static current: LoomPanel | undefined;
+  private readonly panel: vscode.WebviewPanel;
+  private disposables: vscode.Disposable[] = [];
+
+  private constructor(
+    panel: vscode.WebviewPanel,
+    private readonly extensionUri: vscode.Uri,
+    private readonly indexer: IndexerService,
+    private readonly settings: SettingsService,
+  ) {
+    this.panel = panel;
+    this.panel.webview.html = this.getHtml(this.panel.webview);
+
+    this.panel.webview.onDidReceiveMessage(
+      (msg) => void this.onMessage(msg),
+      null,
+      this.disposables,
+    );
+
+    this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+
+    this.disposables.push(
+      this.indexer.onDidUpdate((ev) => {
+        if (ev.full) {
+          this.postSnapshot();
+        } else if (ev.patch) {
+          this.post(
+            makeEnvelope("graph/patch", {
+              addedNodes: ev.patch.addedNodes,
+              updatedNodes: ev.patch.updatedNodes,
+              removedNodeIds: ev.patch.removedNodeIds,
+              addedEdges: [...ev.patch.addedEdges, ...ev.patch.updatedEdges],
+              removedEdgeIds: ev.patch.removedEdgeIds,
+            }),
+          );
+        }
+      }),
+      this.indexer.onDidStateChange((s) => {
+        this.post(
+          makeEnvelope("graph/status", {
+            state:
+              s.state === "indexing"
+                ? "indexing"
+                : s.state === "error"
+                  ? "error"
+                  : s.state === "degraded"
+                    ? "degraded"
+                    : "ready",
+            nodeCount: s.nodeCount,
+            edgeCount: s.edgeCount,
+            message: s.message,
+          } satisfies import("zod").infer<typeof GraphStatusPayload>),
+        );
+      }),
+    );
+  }
+
+  static show(
+    extensionUri: vscode.Uri,
+    indexer: IndexerService,
+    settings: SettingsService,
+  ): LoomPanel {
+    const column = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
+
+    if (LoomPanel.current) {
+      LoomPanel.current.panel.reveal(column);
+      return LoomPanel.current;
+    }
+
+    const panel = vscode.window.createWebviewPanel(
+      "contextloom.loom",
+      "ContextLoom — Loom View",
+      column,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [vscode.Uri.joinPath(extensionUri, "dist")],
+      },
+    );
+
+    LoomPanel.current = new LoomPanel(panel, extensionUri, indexer, settings);
+    return LoomPanel.current;
+  }
+
+  focusNode(nodeId: string): void {
+    this.post(makeEnvelope("view/focus", { nodeId }));
+  }
+
+  private async onMessage(raw: unknown): Promise<void> {
+    const env = parseEnvelope(raw);
+    if (!env) return;
+
+    switch (env.type) {
+      case "ready":
+        this.postSnapshot();
+        break;
+      case "node/open": {
+        const p = NodeOpenPayload.safeParse(env.payload);
+        if (!p.success) return;
+        await openAt(p.data.path, p.data.line, p.data.column);
+        break;
+      }
+      case "node/reveal": {
+        const p = NodeRevealPayload.safeParse(env.payload);
+        if (!p.success) return;
+        await revealInExplorer(p.data.path);
+        break;
+      }
+      case "node/details": {
+        const payload = env.payload as { nodeId?: string; edgeId?: string };
+        this.postDetails(payload.nodeId, payload.edgeId, env.id);
+        break;
+      }
+      case "view/search": {
+        const p = ViewSearchPayload.safeParse(env.payload);
+        if (!p.success) return;
+        const matchIds = this.indexer.search(p.data.query);
+        this.post(makeEnvelope("view/searchResults", { query: p.data.query, matchIds }, env.id));
+        break;
+      }
+      case "view/filters": {
+        const p = ViewFiltersPayload.safeParse(env.payload);
+        if (!p.success) return;
+        // Persist filter state
+        void vscode.commands.executeCommand("contextloom._storeFilters", p.data);
+        break;
+      }
+      case "export/request": {
+        await this.doExport();
+        break;
+      }
+      case "refresh": {
+        await this.indexer.reindex("Manual refresh");
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  private postSnapshot(): void {
+    const store = this.indexer.store;
+    if (!store) {
+      this.post(
+        makeEnvelope("graph/status", {
+          state: "indexing",
+          message: "Building graph…",
+        }),
+      );
+      return;
+    }
+
+    const payload = {
+      root: this.indexer.currentRoot,
+      nodes: store.allNodes(),
+      edges: store.allEdges(),
+      showExternalLinks: this.settings.settings.graph.showExternalLinks,
+    };
+    // Validate shape in dev
+    GraphSnapshotPayload.safeParse(payload);
+    this.post(makeEnvelope("graph/snapshot", payload));
+    this.post(
+      makeEnvelope("graph/status", {
+        state: "ready",
+        nodeCount: store.nodeCount(),
+        edgeCount: store.edgeCount(),
+      }),
+    );
+  }
+
+  private postDetails(nodeId?: string, edgeId?: string, reqId?: string): void {
+    const store = this.indexer.store;
+    if (!store) {
+      this.post(makeEnvelope("selection/details", { kind: "none" }, reqId));
+      return;
+    }
+
+    if (edgeId) {
+      const edge = store.getEdge(edgeId);
+      if (!edge) {
+        this.post(makeEnvelope("selection/details", { kind: "none" }, reqId));
+        return;
+      }
+      this.post(makeEnvelope("selection/details", { kind: "edge", edge }, reqId));
+      return;
+    }
+
+    if (nodeId) {
+      const node = store.getNode(nodeId);
+      if (!node) {
+        this.post(makeEnvelope("selection/details", { kind: "none" }, reqId));
+        return;
+      }
+      this.post(
+        makeEnvelope(
+          "selection/details",
+          {
+            kind: "node",
+            node,
+            incoming: store.incoming(nodeId),
+            outgoing: store.outgoing(nodeId),
+          },
+          reqId,
+        ),
+      );
+      return;
+    }
+
+    this.post(makeEnvelope("selection/details", { kind: "none" }, reqId));
+  }
+
+  private async doExport(): Promise<void> {
+    if (!vscode.workspace.isTrusted) {
+      void vscode.window.showWarningMessage("Export is disabled in untrusted workspaces.");
+      return;
+    }
+    const store = this.indexer.store;
+    if (!store) return;
+    const json = exportGraphJson(store, this.indexer.currentRoot);
+    const uri = await vscode.window.showSaveDialog({
+      filters: { JSON: ["json"] },
+      defaultUri: vscode.Uri.file("contextloom-graph.json"),
+    });
+    if (!uri) return;
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(json, "utf8"));
+    void vscode.window.showInformationMessage(`Exported graph to ${uri.fsPath}`);
+  }
+
+  private post(env: Envelope): void {
+    void this.panel.webview.postMessage(env);
+  }
+
+  private getHtml(webview: vscode.Webview): string {
+    const scriptUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, "dist", "webview.js"),
+    );
+    const nonce = getNonce();
+    const csp = [
+      "default-src 'none'",
+      `script-src 'nonce-${nonce}'`,
+      `style-src ${webview.cspSource} 'nonce-${nonce}' 'unsafe-inline'`,
+      `img-src ${webview.cspSource} data:`,
+      `font-src ${webview.cspSource}`,
+    ].join("; ");
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="${csp}" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ContextLoom</title>
+  <style nonce="${nonce}">
+    :root {
+      color-scheme: light dark;
+      --bg: var(--vscode-editor-background);
+      --fg: var(--vscode-editor-foreground);
+      --border: var(--vscode-panel-border, #444);
+      --muted: var(--vscode-descriptionForeground);
+      --accent: var(--vscode-focusBorder);
+      --input-bg: var(--vscode-input-background);
+      --input-fg: var(--vscode-input-foreground);
+      --button-bg: var(--vscode-button-background);
+      --button-fg: var(--vscode-button-foreground);
+      --list-hover: var(--vscode-list-hoverBackground);
+      --font: var(--vscode-font-family);
+      --font-size: var(--vscode-font-size);
+    }
+    * { box-sizing: border-box; }
+    html, body, #app { height: 100%; margin: 0; }
+    body {
+      font-family: var(--font);
+      font-size: var(--font-size);
+      color: var(--fg);
+      background: var(--bg);
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script nonce="${nonce}" src="${scriptUri}"></script>
+</body>
+</html>`;
+  }
+
+  dispose(): void {
+    LoomPanel.current = undefined;
+    for (const d of this.disposables) d.dispose();
+    this.disposables = [];
+  }
+}
+
+async function openAt(relPath: string, line?: number, column?: number): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) return;
+  const uri = vscode.Uri.joinPath(folder.uri, ...relPath.split("/"));
+  const doc = await vscode.workspace.openTextDocument(uri);
+  const editor = await vscode.window.showTextDocument(doc);
+  if (line != null) {
+    const pos = new vscode.Position(Math.max(0, line - 1), Math.max(0, (column ?? 1) - 1));
+    editor.selection = new vscode.Selection(pos, pos);
+    editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+  }
+}
+
+async function revealInExplorer(relPath: string): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) return;
+  const uri = vscode.Uri.joinPath(folder.uri, ...relPath.split("/"));
+  await vscode.commands.executeCommand("revealInExplorer", uri);
+}
+
+function getNonce(): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let n = "";
+  for (let i = 0; i < 32; i++) n += chars[Math.floor(Math.random() * chars.length)];
+  return n;
+}
