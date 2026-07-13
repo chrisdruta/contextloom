@@ -1,7 +1,7 @@
 import picomatch from "picomatch";
 import type { ResolvedSettings } from "../settings/schema";
 import type { FileSnapshot, ParseResult } from "../shared/types";
-import { InstructionFileParser, isInstructionFile } from "./instruction";
+import { InstructionFileParser } from "./instruction";
 import { MarkdownParser } from "./markdown";
 import type { ContextParser, ParseContext } from "./types";
 import { TYPE_PRECEDENCE } from "./types";
@@ -10,7 +10,7 @@ export class ParserRegistry {
   private readonly parsers: ContextParser[];
 
   constructor(parsers?: ContextParser[]) {
-    // Registration order: instruction first (more specific), then markdown
+    // Registration order: most specific claimant first, markdown last
     this.parsers = parsers ?? [new InstructionFileParser(), new MarkdownParser()];
   }
 
@@ -18,14 +18,19 @@ export class ParserRegistry {
     return this.parsers;
   }
 
-  /** Pick parsers that match path and are enabled. Instruction files use instruction parser only. */
+  /**
+   * Pick parsers for a path. The first enabled parser that claims() the path
+   * runs exclusively; otherwise all enabled pattern matches run (merged).
+   * Patterns match with dot:true — discovery walks dotted dirs, so parsers must too.
+   */
   matching(path: string, settings: ResolvedSettings): ContextParser[] {
     const enabled = this.parsers.filter((p) => p.enabled(settings));
-    if (isInstructionFile(path) && settings.agents.enabled) {
-      const instr = enabled.filter((p) => p.id === "instruction");
-      if (instr.length > 0) return instr;
+    for (const parser of enabled) {
+      if (parser.claims?.(path)) return [parser];
     }
-    return enabled.filter((p) => p.patterns.some((pat) => picomatch.isMatch(path, pat)));
+    return enabled.filter((p) =>
+      p.patterns.some((pat) => picomatch.isMatch(path, pat, { dot: true })),
+    );
   }
 
   parse(file: FileSnapshot, ctx: ParseContext): ParseResult {

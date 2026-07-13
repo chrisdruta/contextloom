@@ -156,7 +156,17 @@
           "items": {
             "type": "string"
           },
-          "default": ["**/*.md", "**/*.mdc", "**/AGENTS.md", "**/CLAUDE.md", "**/SKILL.md"],
+          "default": [
+            "**/*.md",
+            "**/*.mdc",
+            "**/AGENTS.md",
+            "**/CLAUDE.md",
+            "**/SKILL.md",
+            "**/.claude/skills/**",
+            "**/.claude/settings.json",
+            "**/.claude/settings.local.json",
+            "**/.cursorrules"
+          ],
           "description": "Include globs for discovery."
         },
         "contextloom.exclude": {
@@ -235,6 +245,21 @@
           "type": "boolean",
           "default": true,
           "description": "Recognize agent instruction formats (AGENTS.md, CLAUDE.md)."
+        },
+        "contextloom.agents.agentsMdMode": {
+          "type": "string",
+          "enum": ["nearest", "merge"],
+          "default": "nearest",
+          "description": "AGENTS.md consumer semantics: nearest-wins per the agents.md spec, or merge (Cursor/VS Code style — nested files all apply)."
+        },
+        "contextloom.agents.formats": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string"
+          },
+          "default": ["agents-md", "claude", "cursor"],
+          "description": "Enabled agent-format adapters (agents-md, claude, cursor)."
         }
       }
     }

@@ -12,6 +12,8 @@ export interface ContextParser {
   readonly version: number;
   readonly patterns: string[];
   enabled(settings: ResolvedSettings): boolean;
+  /** When true for a path, this parser runs exclusively (first claimant wins). */
+  claims?(path: string): boolean;
   parse(file: FileSnapshot, ctx: ParseContext): ParseResult;
   cacheDependsOn?(file: FileSnapshot): string[];
 }
@@ -22,6 +24,7 @@ export const TYPE_PRECEDENCE: Record<string, number> = {
   agent: 50,
   command: 50,
   instruction: 40,
+  config: 40,
   document: 30,
   "source-file": 20,
   directory: 10,

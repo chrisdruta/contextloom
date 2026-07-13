@@ -59,6 +59,10 @@ export class InstructionFileParser implements ContextParser {
     return settings.agents.enabled;
   }
 
+  claims(path: string): boolean {
+    return isInstructionFile(path);
+  }
+
   parse(file: FileSnapshot, ctx: ParseContext): ParseResult {
     if (!isInstructionFile(file.path)) {
       return { nodes: [], references: [], edges: [], diagnostics: [], scopeRules: [] };

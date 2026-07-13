@@ -21,6 +21,7 @@ export type NodeType =
   | "agent"
   | "skill"
   | "command"
+  | "config"
   | "directory"
   | "heading"
   | "source-file"
@@ -73,6 +74,8 @@ export interface RawReference {
   range: SourceRange;
   /** Optional link text / alias for display */
   text?: string;
+  /** Resolution hint: this reference names a skill, not a path */
+  rel?: "uses-skill";
 }
 
 export interface ParserDiagnostic {

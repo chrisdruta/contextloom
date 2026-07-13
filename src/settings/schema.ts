@@ -6,7 +6,13 @@ export const DEFAULT_INCLUDE = [
   "**/AGENTS.md",
   "**/CLAUDE.md",
   "**/SKILL.md",
+  "**/.claude/skills/**",
+  "**/.claude/settings.json",
+  "**/.claude/settings.local.json",
+  "**/.cursorrules",
 ] as const;
+
+export const DEFAULT_AGENT_FORMATS = ["agents-md", "claude", "cursor"] as const;
 
 export const DEFAULT_EXCLUDE = [
   "**/node_modules/**",
@@ -57,6 +63,11 @@ export const SettingsSchema = z.object({
   agents: z
     .object({
       enabled: z.boolean().default(true),
+      agentsMdMode: z.enum(["nearest", "merge"]).default("nearest"),
+      formats: z
+        .array(z.string().max(64))
+        .max(20)
+        .default([...DEFAULT_AGENT_FORMATS]),
     })
     .default({}),
 });
@@ -96,7 +107,11 @@ export function resolveSettings(
   return SettingsSchema.parse(merged);
 }
 
-/** Subset of settings that participate in cache invalidation. */
+/**
+ * Subset of settings that participate in cache invalidation.
+ * agents.agentsMdMode is deliberately absent: it only affects query-time scope
+ * resolution, never parse output, so flipping it must not invalidate the cache.
+ */
 export function cacheRelevantSettings(s: ResolvedSettings): unknown {
   return {
     include: s.include,
@@ -104,6 +119,6 @@ export function cacheRelevantSettings(s: ResolvedSettings): unknown {
     respectGitignore: s.respectGitignore,
     followSymlinks: s.followSymlinks,
     wikiLinks: s.wikiLinks,
-    agents: s.agents,
+    agents: { enabled: s.agents.enabled, formats: s.agents.formats },
   };
 }
