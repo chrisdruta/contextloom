@@ -12,7 +12,8 @@ Point it at a repo (or a subdirectory like `/docs`) and it renders Markdown docu
 - Markdown discovery honoring `.gitignore`, VS Code excludes, and ContextLoom globs
 - Full link parsing: inline, reference-style, images, fragments, frontmatter, wiki links `[[…]]`
 - Two-phase link resolution that **never guesses** (ambiguous wiki links → diagnostic, not edge)
-- Interactive Loom View: pan, zoom, select, hover neighborhood, search (`/`), type filters
+- Interactive Loom View — **Cytoscape.js + fcose layout** (with a lightweight canvas fallback via `contextloom.graph.renderer`): pan, zoom, select, hover neighborhood, search (`/`), type filters
+- Loom View survives window reloads (panel state is restored)
 - **Thread Inspector** with provenance (parser, origin, confidence, source ranges)
 - **Loose Threads** view: orphans + broken links
 - Problems-panel diagnostics for broken / ambiguous links
@@ -81,8 +82,10 @@ The canvas graph is not screen-reader navigable. Use the **Graph Outline** view 
 
 ```bash
 bun install
-bun run build      # esbuild dual-entry (extension + webview)
-bun run test       # Vitest unit tests
+bun run build            # esbuild dual-entry (extension + webview)
+bun run test             # Vitest unit tests (includes §Q perf guards)
+bun run test:integration # @vscode/test-cli extension-host tests (needs a display; CI runs xvfb)
+bun run bench:renderers  # ADR-001 renderer bake-off numbers
 bun run typecheck
 bun run lint
 ```
@@ -91,9 +94,9 @@ See [docs/development.md](./docs/development.md) and [CONTRIBUTING.md](./CONTRIB
 
 ## Architecture
 
-- **Host:** TypeScript, Graphology store, mdast parser, zod-validated protocol
-- **Webview:** Preact chrome + canvas graph renderer behind a `GraphRenderer` interface
-- **Parsers:** pure functions (no `vscode` import) — unit-tested in Vitest
+- **Host:** TypeScript, Graphology store, mdast parser, zod-validated protocol (both sides)
+- **Webview:** Preact chrome + **Cytoscape.js/fcose** renderer behind a `GraphRenderer` interface (canvas fallback selectable; see [ADR-001](./docs/adr/001-graph-rendering.md))
+- **Parsers:** pure functions (no `vscode` import) — unit-tested in Vitest; extension-host behavior covered by `@vscode/test-cli` integration tests on Linux and Windows CI
 
 Details: [docs/architecture.md](./docs/architecture.md) · [docs/graph-model.md](./docs/graph-model.md)
 

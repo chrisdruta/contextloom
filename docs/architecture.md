@@ -3,7 +3,22 @@
 ContextLoom is a VS Code extension with two esbuild entry points:
 
 1. **Extension host** (`src/extension/extension.ts`) — discovery, parse, resolve, store, diagnostics, commands, views
-2. **Webview** (`webview-ui/src/main.tsx`) — Preact chrome + canvas `GraphRenderer`
+2. **Webview** (`webview-ui/src/main.tsx`) — Preact chrome + `GraphRenderer` seam
+
+## Rendering
+
+`GraphRenderer` (webview-ui/src/renderer.ts) has three implementations:
+
+- **CytoscapeRenderer** (default) — Cytoscape.js + fcose. Layout strategy is
+  measured, not naive ([ADR-001](./adr/001-graph-rendering.md)): full fcose up
+  to 1,500 visible nodes, concentric beyond; small patches lay out only the
+  affected 2-hop neighborhood.
+- **CanvasRenderer** — hand-rolled force sim, ~30 KB; selectable via
+  `contextloom.graph.renderer: "canvas"`. Repulsion capped at 400 nodes.
+- **NullRenderer** — seam proof for tests.
+
+The renderer lives outside Preact's render tree; the host passes the chosen
+renderer via a `data-renderer` attribute on the webview root element.
 
 ## Layers
 
@@ -34,9 +49,15 @@ discover → parse (cache hit?) → resolve RawReferences → GraphStore → ana
 
 ## Protocol
 
-Envelope: `{ v: 1, id, type, payload }` with zod validation on both sides.
+Envelope: `{ v: 1, id, type, payload }` with zod validation on both sides —
+the webview imports the same schemas from `src/shared/protocol.ts` (no
+hand-mirrored types).
 
 Key messages: `graph/snapshot`, `graph/patch`, `graph/status`, `selection/details`, `node/open`, `view/search`, `view/filters`, `export/request`.
+
+The Loom View panel registers a `WebviewPanelSerializer`; the webview persists
+`{ root, filters }` via `webview.setState`, so the panel revives with its
+graph after a window reload.
 
 ## Security
 
