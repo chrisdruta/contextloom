@@ -1,6 +1,10 @@
 import type { IndexCache } from "../cache/cache";
 import { discoverFiles } from "../discovery/discover";
 import type { ParserRegistry } from "../parsers/registry";
+import { deriveStructuralEdges } from "../scope/derive";
+import { analyzeImports, buildImportAdjacency } from "../scope/imports";
+import { buildScopeIndex } from "../scope/index-builder";
+import type { ScopeIndex } from "../scope/types";
 import type { ResolvedSettings } from "../settings/schema";
 import type {
   ContextEdge,
@@ -10,6 +14,7 @@ import type {
   ParseResult,
   ParserDiagnostic,
   RawReference,
+  ScopeRule,
 } from "../shared/types";
 import { buildBasenameIndex, buildSkillIndex, resolveReferences } from "./resolver";
 import { GraphStore } from "./store";
@@ -28,6 +33,12 @@ export interface BuildResult {
   refIndex: Map<string, RawReference[]>;
   /** path → parse result meta (heading slugs etc.) */
   parseMeta: Map<string, { headingSlugs: string[]; parserId: string; parserVersion: number }>;
+  /** path → scope rules, for incremental scope recomputation */
+  scopeRuleIndex: Map<string, ScopeRule[]>;
+  /** Query-time scope resolution snapshot (resolveContext / filesInScope). */
+  scopeIndex: ScopeIndex;
+  /** Ids of derived (scope-pass) nodes/edges, for clean incremental removal. */
+  derivedIds: { nodeIds: string[]; edgeIds: string[] };
   skipped: { path: string; reason: string }[];
   truncated: boolean;
   fileCount: number;
@@ -65,7 +76,7 @@ export function buildGraph(opts: BuilderOptions): BuildResult {
   });
 
   if (opts.isCancelled?.()) {
-    return emptyResult(store, discovery.skipped, discovery.truncated);
+    return emptyResult(store, discovery.skipped, discovery.truncated, opts);
   }
 
   const files = discovery.files;
@@ -154,6 +165,23 @@ export function buildGraph(opts: BuilderOptions): BuildResult {
     diagnostics.push(...resolved.diagnostics);
   }
 
+  // Scope passes: @import analysis → derived structural edges → scope index
+  const scopeRuleIndex = new Map<string, ScopeRule[]>();
+  for (const [path, pr] of parseResults) {
+    if (pr.scopeRules.length > 0) scopeRuleIndex.set(path, pr.scopeRules);
+  }
+  const scope = runScopePasses({
+    nodes: [...nodeMap.values()],
+    scopeRuleIndex,
+    allPaths,
+    skipped: discovery.skipped,
+    workspaceRoot: opts.workspaceRoot,
+    settings: opts.settings,
+  });
+  diagnostics.push(...scope.diagnostics);
+  for (const n of scope.nodes) nodeMap.set(n.id, n);
+  for (const e of scope.edges) mergeEdge(edgeMap, e);
+
   for (const n of nodeMap.values()) allNodes.push(n);
   for (const e of edgeMap.values()) allEdges.push(e);
 
@@ -172,9 +200,67 @@ export function buildGraph(opts: BuilderOptions): BuildResult {
     diagnostics,
     refIndex,
     parseMeta,
+    scopeRuleIndex,
+    scopeIndex: scope.scopeIndex,
+    derivedIds: scope.derivedIds,
     skipped: discovery.skipped,
     truncated: discovery.truncated,
     fileCount: files.length,
+  };
+}
+
+interface ScopePassInput {
+  nodes: ContextNode[];
+  scopeRuleIndex: Map<string, ScopeRule[]>;
+  allPaths: Iterable<string>;
+  skipped: { path: string; reason: string }[];
+  workspaceRoot: string;
+  settings: ResolvedSettings;
+}
+
+interface ScopePassOutput {
+  nodes: ContextNode[];
+  edges: ContextEdge[];
+  diagnostics: ParserDiagnostic[];
+  scopeIndex: ScopeIndex;
+  derivedIds: { nodeIds: string[]; edgeIds: string[] };
+}
+
+/**
+ * Post-resolution scope passes, shared by full builds and incremental updates.
+ * Derived output is cacheable:false and recomputed wholesale each time —
+ * applies-to stays query-time via the returned ScopeIndex.
+ */
+export function runScopePasses(input: ScopePassInput): ScopePassOutput {
+  const pathSet = new Set([...input.allPaths]);
+  const adjacency = buildImportAdjacency(input.nodes, input.workspaceRoot, (p) => pathSet.has(p));
+  const claudeRoots = input.nodes
+    .filter((n) => n.type === "instruction" && n.metadata.format === "claude-md" && n.path)
+    .map((n) => n.path!);
+  const imports = analyzeImports(claudeRoots, adjacency);
+
+  const derived = deriveStructuralEdges({
+    nodes: input.nodes,
+    allPaths: pathSet,
+    skipped: input.skipped,
+  });
+
+  const scopeIndex = buildScopeIndex({
+    workspaceRoot: input.workspaceRoot,
+    settings: input.settings,
+    scopeRules: [...input.scopeRuleIndex.values()].flat(),
+    importChains: imports.chains,
+  });
+
+  return {
+    nodes: derived.nodes,
+    edges: derived.edges,
+    diagnostics: imports.diagnostics,
+    scopeIndex,
+    derivedIds: {
+      nodeIds: derived.nodes.map((n) => n.id),
+      edgeIds: derived.edges.map((e) => e.id),
+    },
   };
 }
 
@@ -360,12 +446,20 @@ function emptyResult(
   store: GraphStore,
   skipped: { path: string; reason: string }[],
   truncated: boolean,
+  opts: BuilderOptions,
 ): BuildResult {
   return {
     store,
     diagnostics: [],
     refIndex: new Map(),
     parseMeta: new Map(),
+    scopeRuleIndex: new Map(),
+    scopeIndex: buildScopeIndex({
+      workspaceRoot: opts.workspaceRoot,
+      settings: opts.settings,
+      scopeRules: [],
+    }),
+    derivedIds: { nodeIds: [], edgeIds: [] },
     skipped,
     truncated,
     fileCount: 0,
