@@ -24,6 +24,20 @@ describe("secure discovery", () => {
     expect(result.skipped).toContainEqual({ path: "../../", reason: "outside-workspace" });
   });
 
+  it("skips symlinks entirely when followSymlinks is off (default)", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "cl-discovery-"));
+    dirs.push(workspace);
+    writeFileSync(join(workspace, "real.md"), "# Real");
+    symlinkSync(join(workspace, "real.md"), join(workspace, "alias.md"), "file");
+
+    const result = discoverFiles({
+      workspaceRoot: workspace,
+      graphRoot: "",
+      settings: defaultSettings(),
+    });
+    expect(result.files.map((file) => file.path)).toEqual(["real.md"]);
+  });
+
   it("does not follow symlinks outside the workspace", () => {
     const parent = mkdtempSync(join(tmpdir(), "cl-discovery-"));
     dirs.push(parent);

@@ -8,3 +8,4 @@ dist-tsc/
 coverage/
 .vscode-test/
 large-generated/
+test-dist/
