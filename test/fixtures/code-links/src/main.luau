@@ -1,0 +1,2 @@
+-- luau entry
+return {}

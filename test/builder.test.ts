@@ -70,6 +70,38 @@ describe("buildGraph", () => {
     expect(orphans.some((n) => n.path?.includes("packages/web"))).toBe(true);
   });
 
+  it("links to real program/asset files become source-file nodes, not missing", () => {
+    const result = buildGraph({
+      workspaceRoot: fixturePath("code-links"),
+      graphRoot: "",
+      settings: defaultSettings(),
+      registry,
+    });
+    const store = result.store;
+
+    // Existing non-md targets: source-file nodes with references edges
+    for (const path of ["src/main.luau", "assets/logo.png", "wally.toml"]) {
+      const node = store.getNode(`file:${path}`);
+      expect(node?.type).toBe("source-file");
+      const incoming = store.incoming(`file:${path}`);
+      expect(incoming.some((e) => e.type === "references")).toBe(true);
+      expect(incoming.some((e) => e.type === "broken-ref")).toBe(false);
+    }
+    // No false "unresolved" diagnostics for files that exist on disk
+    expect(
+      result.diagnostics.filter((d) => d.code === "unresolved" && d.message.includes("luau")),
+    ).toHaveLength(0);
+
+    // Truly absent target still classifies as missing + broken-ref + diagnostic
+    expect(store.getNode("missing:src/ghost.py")?.type).toBe("missing");
+    expect(
+      result.diagnostics.some((d) => d.code === "broken-link" && d.message.includes("ghost")),
+    ).toBe(true);
+
+    // Directory links keep their dir-node behavior (pathExists is files-only)
+    expect(store.getNode("dir:src")?.type).toBe("directory");
+  });
+
   it("export is deterministic", () => {
     const result = buildGraph({
       workspaceRoot: fixturePath("basic-docs"),

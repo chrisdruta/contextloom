@@ -1,3 +1,5 @@
+import { statSync } from "node:fs";
+import { join } from "node:path";
 import type { IndexCache } from "../cache/cache";
 import { discoverFiles } from "../discovery/discover";
 import type { ParserRegistry } from "../parsers/registry";
@@ -134,6 +136,7 @@ export function buildGraph(opts: BuilderOptions): BuildResult {
     headingSlugsByPath.set(p, meta.headingSlugs);
   }
   const skillIndex = buildSkillIndex([...parseResults.values()].flatMap((pr) => pr.nodes));
+  const pathExists = makePathExists(opts.workspaceRoot);
 
   const allNodes: ContextNode[] = [];
   const allEdges: ContextEdge[] = [];
@@ -152,6 +155,7 @@ export function buildGraph(opts: BuilderOptions): BuildResult {
       sourceHeadingSlugs: parseMeta.get(file.path)?.headingSlugs,
       headingSlugsByPath,
       existingFiles: allPaths,
+      pathExists,
       settings: opts.settings,
       workspaceRoot: opts.workspaceRoot,
       basenameIndex: mapToArrays(basenameIndex),
@@ -206,6 +210,28 @@ export function buildGraph(opts: BuilderOptions): BuildResult {
     skipped: discovery.skipped,
     truncated: discovery.truncated,
     fileCount: files.length,
+  };
+}
+
+/**
+ * Memoized on-disk existence check for link targets outside the discovered
+ * set (program files, assets, configs) — without it every link to a real
+ * .ts/.luau/.png file was misclassified as `missing` with a false
+ * broken-link diagnostic. Files only: directories keep their dir-node path.
+ */
+function makePathExists(workspaceRoot: string): (rel: string) => boolean {
+  const memo = new Map<string, boolean>();
+  return (rel) => {
+    let hit = memo.get(rel);
+    if (hit === undefined) {
+      try {
+        hit = statSync(join(workspaceRoot, ...rel.split("/"))).isFile();
+      } catch {
+        hit = false;
+      }
+      memo.set(rel, hit);
+    }
+    return hit;
   };
 }
 
@@ -393,6 +419,7 @@ export function applyFileChanges(
     ...store.allNodes().filter((n) => !n.path || !deletedOrTouched.has(n.path)),
     ...nodes,
   ]);
+  const pathExists = makePathExists(opts.workspaceRoot);
 
   for (const path of reResolvePaths) {
     const refs = opts.refIndex.get(path);
@@ -410,6 +437,7 @@ export function applyFileChanges(
       sourceHeadingSlugs: opts.parseMeta.get(path)?.headingSlugs,
       headingSlugsByPath,
       existingFiles,
+      pathExists,
       settings: opts.settings,
       workspaceRoot: opts.workspaceRoot,
       basenameIndex: mapToArrays(basenameIndex),
