@@ -142,7 +142,7 @@ export function App() {
           setNodeCount(p.nodes.length);
           setEdgeCount(p.edges.length);
           setSeenTypes(new Set(p.nodes.map((n) => n.type)));
-          persistState({ root: p.root });
+          persistState({ root: p.root, folder: p.folder });
           if (p.showExternalLinks != null) {
             const showExternal = p.showExternalLinks;
             setFilters((f) => {

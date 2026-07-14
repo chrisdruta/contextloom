@@ -2,12 +2,13 @@ import * as vscode from "vscode";
 import type { LooseThread } from "../analysis/orphans";
 import type { GraphStore } from "../graph/store";
 import type { ContextNode } from "../shared/types";
-import type { IndexerService } from "./indexer";
+import type { IndexerRegistry } from "./indexer-registry";
 
 export class GraphRootsProvider implements vscode.TreeDataProvider<RootItem> {
   private readonly _onDidChange = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChange.event;
-  private adHoc: string[] = [];
+  /** folder uri → ad-hoc roots opened this session */
+  private readonly adHoc = new Map<string, string[]>();
 
   constructor(private readonly getSavedRoots: () => string[]) {}
 
@@ -15,14 +16,23 @@ export class GraphRootsProvider implements vscode.TreeDataProvider<RootItem> {
     this._onDidChange.fire();
   }
 
-  addAdHoc(root: string): void {
-    if (!this.adHoc.includes(root) && !this.getSavedRoots().includes(root)) {
-      this.adHoc.push(root);
+  addAdHoc(root: string, folderUri?: string): void {
+    const key = folderUri ?? vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? "";
+    const list = this.adHoc.get(key) ?? [];
+    if (!list.includes(root) && !this.getSavedRoots().includes(root)) {
+      list.push(root);
+      this.adHoc.set(key, list);
       this.refresh();
     }
   }
 
   getTreeItem(element: RootItem): vscode.TreeItem {
+    if (element.kind === "folder") {
+      const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.Expanded);
+      item.iconPath = new vscode.ThemeIcon("root-folder");
+      item.tooltip = element.folderUri;
+      return item;
+    }
     const item = new vscode.TreeItem(
       element.label || "(workspace root)",
       vscode.TreeItemCollapsibleState.None,
@@ -31,22 +41,47 @@ export class GraphRootsProvider implements vscode.TreeDataProvider<RootItem> {
     item.command = {
       command: "contextloom.openGraph",
       title: "Open Graph",
-      arguments: [element.root],
+      arguments: [element.root, element.folderUri],
     };
     item.tooltip = element.root || "Workspace root";
     return item;
   }
 
-  getChildren(): RootItem[] {
-    const saved = this.getSavedRoots();
-    const roots = new Set<string>(["", ...saved, ...this.adHoc]);
-    return [...roots].map((r) => ({ root: r, label: r || "(workspace root)" }));
+  getChildren(element?: RootItem): RootItem[] {
+    if (element) return element.children ?? [];
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    if (folders.length <= 1) return this.rootItems(folders[0]);
+    // Multi-root: one expandable group per workspace folder
+    return folders.map((folder) => ({
+      kind: "folder" as const,
+      label: folder.name,
+      folderUri: folder.uri.toString(),
+      children: this.rootItems(folder),
+    }));
+  }
+
+  private rootItems(folder: vscode.WorkspaceFolder | undefined): RootItem[] {
+    const folderUri = folder?.uri.toString();
+    const roots = new Set<string>([
+      "",
+      ...this.getSavedRoots(),
+      ...(this.adHoc.get(folderUri ?? "") ?? []),
+    ]);
+    return [...roots].map((root) => ({
+      kind: "root" as const,
+      root,
+      folderUri,
+      label: root || "(workspace root)",
+    }));
   }
 }
 
 interface RootItem {
-  root: string;
+  kind: "folder" | "root";
   label: string;
+  root?: string;
+  folderUri?: string;
+  children?: RootItem[];
 }
 
 export class LooseThreadsProvider implements vscode.TreeDataProvider<ThreadItem> {
@@ -54,7 +89,7 @@ export class LooseThreadsProvider implements vscode.TreeDataProvider<ThreadItem>
   readonly onDidChangeTreeData = this._onDidChange.event;
   private threads: LooseThread[] = [];
 
-  constructor(private readonly indexer: IndexerService) {
+  constructor(private readonly indexer: IndexerRegistry) {
     indexer.onDidUpdate((ev) => {
       this.threads = ev.looseThreads;
       this._onDidChange.fire(undefined);
@@ -139,7 +174,7 @@ export class GraphOutlineProvider implements vscode.TreeDataProvider<OutlineItem
   private readonly _onDidChange = new vscode.EventEmitter<OutlineItem | undefined>();
   readonly onDidChangeTreeData = this._onDidChange.event;
 
-  constructor(private readonly indexer: IndexerService) {
+  constructor(private readonly indexer: IndexerRegistry) {
     indexer.onDidUpdate(() => this._onDidChange.fire(undefined));
   }
 
@@ -262,7 +297,7 @@ export class AgentsSkillsProvider implements vscode.TreeDataProvider<AgentSkillI
   private readonly _onDidChange = new vscode.EventEmitter<AgentSkillItem | undefined>();
   readonly onDidChangeTreeData = this._onDidChange.event;
 
-  constructor(private readonly indexer: IndexerService) {
+  constructor(private readonly indexer: IndexerRegistry) {
     indexer.onDidUpdate(() => this._onDidChange.fire(undefined));
   }
 

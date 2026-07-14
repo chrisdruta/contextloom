@@ -56,6 +56,8 @@ export class SettingsService implements vscode.Disposable {
       },
       agents: {
         enabled: cfg.get("agents.enabled"),
+        agentsMdMode: cfg.get("agents.agentsMdMode"),
+        formats: cfg.get("agents.formats"),
       },
     };
     return resolveSettings(raw, (msg) => {

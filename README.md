@@ -122,8 +122,8 @@ Details: [docs/architecture.md](./docs/architecture.md) · [docs/graph-model.md]
 | Version | Focus |
 |---|---|
 | **0.1** | Markdown + instruction-file graph |
-| **0.2** | Agent context scope resolution, `.claude/`, Cursor (this release) |
-| **0.3** | Weave Health analysis suite, Copilot/Windsurf adapters, multi-root |
+| **0.2** | Agent context scope resolution, `.claude/`, Cursor, multi-root workspaces (this release) |
+| **0.3** | Weave Health analysis suite, Copilot/Windsurf adapters |
 | **0.4+** | Opt-in LLM features via `vscode.lm` |
 
 Full plan: [PLAN.md](./PLAN.md).

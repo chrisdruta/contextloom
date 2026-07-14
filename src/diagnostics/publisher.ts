@@ -2,17 +2,23 @@ import * as vscode from "vscode";
 import type { ParserDiagnostic } from "../shared/types";
 
 /**
- * Single writer for the Problems panel.
+ * Single writer for the Problems panel. Scoped per workspace root so
+ * multi-root folders publish independently without clobbering each other.
  */
 export class DiagnosticsPublisher implements vscode.Disposable {
   private readonly collection: vscode.DiagnosticCollection;
+  private readonly urisByRoot = new Map<string, Set<string>>();
 
   constructor() {
     this.collection = vscode.languages.createDiagnosticCollection("contextloom");
   }
 
   publish(diagnostics: ParserDiagnostic[], workspaceRoot: string, enabled: boolean): void {
-    this.collection.clear();
+    // Replace only this root's previous entries
+    for (const uriStr of this.urisByRoot.get(workspaceRoot) ?? []) {
+      this.collection.delete(vscode.Uri.parse(uriStr));
+    }
+    this.urisByRoot.delete(workspaceRoot);
     if (!enabled) return;
 
     const byPath = new Map<string, vscode.Diagnostic[]>();
@@ -56,10 +62,20 @@ export class DiagnosticsPublisher implements vscode.Disposable {
     for (const [uriStr, diags] of byPath) {
       this.collection.set(vscode.Uri.parse(uriStr), diags);
     }
+    this.urisByRoot.set(workspaceRoot, new Set(byPath.keys()));
+  }
+
+  /** Drop a folder's diagnostics (folder removed from the workspace). */
+  clearRoot(workspaceRoot: string): void {
+    for (const uriStr of this.urisByRoot.get(workspaceRoot) ?? []) {
+      this.collection.delete(vscode.Uri.parse(uriStr));
+    }
+    this.urisByRoot.delete(workspaceRoot);
   }
 
   clear(): void {
     this.collection.clear();
+    this.urisByRoot.clear();
   }
 
   dispose(): void {

@@ -56,9 +56,12 @@ export class IndexerService implements vscode.Disposable {
     private readonly context: vscode.ExtensionContext,
     private readonly settings: SettingsService,
     private readonly diagnostics: DiagnosticsPublisher,
+    readonly folder: vscode.WorkspaceFolder,
   ) {
+    this.workspaceRoot = folder.uri.fsPath;
+    // Per-folder cache file so multi-root folders never share entries.
     const storagePath = context.storageUri?.fsPath
-      ? cachePathForStorage(context.storageUri.fsPath)
+      ? cachePathForStorage(context.storageUri.fsPath, contentHash(folder.uri.toString()))
       : null;
     this.cache = new IndexCache(storagePath);
 
@@ -105,13 +108,6 @@ export class IndexerService implements vscode.Disposable {
   }
 
   async reindex(reason?: string): Promise<void> {
-    const folder = vscode.workspace.workspaceFolders?.[0];
-    if (!folder) {
-      this.setState("error", "No workspace folder open");
-      return;
-    }
-
-    this.workspaceRoot = folder.uri.fsPath;
     const gen = ++this.generation;
     this.setState("indexing", reason ?? "Indexing…");
 
@@ -189,8 +185,7 @@ export class IndexerService implements vscode.Disposable {
   private ensureWatcher(): void {
     for (const w of this.watchers) w.dispose();
     this.watchers = [];
-    const folder = vscode.workspace.workspaceFolders?.[0];
-    if (!folder) return;
+    const folder = this.folder;
 
     // Watch what discovery includes (PLAN §L.2) rather than a hardcoded glob,
     // so instruction/config files added to contextloom.include are tracked.
@@ -365,10 +360,12 @@ export class IndexerService implements vscode.Disposable {
   }
 
   dispose(): void {
+    this.generation++; // cancel any in-flight build
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     if (this.ignoreDebounceTimer) clearTimeout(this.ignoreDebounceTimer);
     for (const d of this.disposables) d.dispose();
     for (const w of this.watchers) w.dispose();
+    this.diagnostics.clearRoot(this.workspaceRoot);
     this._onDidUpdate.dispose();
     this._onDidStateChange.dispose();
   }

@@ -42,6 +42,8 @@ export type InspectorTab = "details" | "context";
 /** State the webview persists across VS Code restarts (panel revival). */
 export interface WebviewState {
   root?: string;
+  /** Workspace-folder URI the graph was opened for (multi-root revival). */
+  folder?: string;
   filters?: FilterState;
   inspectorTab?: InspectorTab;
 }

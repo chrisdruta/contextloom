@@ -3,7 +3,7 @@ import { realpathSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import * as vscode from "vscode";
 import { exportGraphJson } from "../export/export";
-import type { IndexerService } from "../extension/indexer";
+import type { IndexerRegistry } from "../extension/indexer-registry";
 import { filesInScope, resolveContext } from "../scope/resolve";
 import type { SettingsService } from "../settings/service";
 import { normalizeWorkspaceRelativePath } from "../shared/paths";
@@ -37,7 +37,7 @@ export class LoomPanel {
   private constructor(
     panel: vscode.WebviewPanel,
     private readonly extensionUri: vscode.Uri,
-    private readonly indexer: IndexerService,
+    private readonly indexer: IndexerRegistry,
     private readonly settings: SettingsService,
   ) {
     this.panel = panel;
@@ -93,7 +93,7 @@ export class LoomPanel {
 
   static show(
     extensionUri: vscode.Uri,
-    indexer: IndexerService,
+    indexer: IndexerRegistry,
     settings: SettingsService,
   ): LoomPanel {
     const column = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
@@ -122,7 +122,7 @@ export class LoomPanel {
   static revive(
     panel: vscode.WebviewPanel,
     extensionUri: vscode.Uri,
-    indexer: IndexerService,
+    indexer: IndexerRegistry,
     settings: SettingsService,
   ): LoomPanel {
     panel.webview.options = {
@@ -209,13 +209,13 @@ export class LoomPanel {
       case "node/open": {
         const p = NodeOpenPayload.safeParse(env.payload);
         if (!p.success || !this.isKnownPath(p.data.path)) return;
-        await openAt(p.data.path, p.data.line, p.data.column);
+        await openAt(p.data.path, this.indexer.workspaceFolder, p.data.line, p.data.column);
         break;
       }
       case "node/reveal": {
         const p = NodeRevealPayload.safeParse(env.payload);
         if (!p.success || !this.isKnownPath(p.data.path)) return;
-        await revealInExplorer(p.data.path);
+        await revealInExplorer(p.data.path, this.indexer.workspaceFolder);
         break;
       }
       case "node/details": {
@@ -309,6 +309,7 @@ export class LoomPanel {
 
     const payload = {
       root: this.indexer.currentRoot,
+      folder: this.indexer.workspaceFolder?.uri.toString(),
       nodes,
       edges,
       showExternalLinks: this.settings.settings.graph.showExternalLinks,
@@ -455,8 +456,13 @@ export class LoomPanel {
   }
 }
 
-async function openAt(relPath: string, line?: number, column?: number): Promise<void> {
-  const uri = confinedWorkspaceUri(relPath);
+async function openAt(
+  relPath: string,
+  folder: vscode.WorkspaceFolder | undefined,
+  line?: number,
+  column?: number,
+): Promise<void> {
+  const uri = confinedWorkspaceUri(relPath, folder);
   if (!uri) return;
   const doc = await vscode.workspace.openTextDocument(uri);
   const editor = await vscode.window.showTextDocument(doc);
@@ -467,14 +473,19 @@ async function openAt(relPath: string, line?: number, column?: number): Promise<
   }
 }
 
-async function revealInExplorer(relPath: string): Promise<void> {
-  const uri = confinedWorkspaceUri(relPath);
+async function revealInExplorer(
+  relPath: string,
+  folder: vscode.WorkspaceFolder | undefined,
+): Promise<void> {
+  const uri = confinedWorkspaceUri(relPath, folder);
   if (!uri) return;
   await vscode.commands.executeCommand("revealInExplorer", uri);
 }
 
-function confinedWorkspaceUri(relPath: string): vscode.Uri | null {
-  const folder = vscode.workspace.workspaceFolders?.[0];
+function confinedWorkspaceUri(
+  relPath: string,
+  folder: vscode.WorkspaceFolder | undefined,
+): vscode.Uri | null {
   if (!folder || folder.uri.scheme !== "file") return null;
   const safePath = normalizeWorkspaceRelativePath(relPath);
   if (safePath === null || safePath !== relPath.replace(/\\/g, "/")) return null;

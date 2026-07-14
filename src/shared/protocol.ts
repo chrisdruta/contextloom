@@ -55,6 +55,8 @@ export type Envelope = z.infer<typeof EnvelopeSchema>;
 // Host → webview payloads
 export const GraphSnapshotPayload = z.object({
   root: z.string(),
+  /** Workspace-folder URI (multi-root revival); persisted by the webview. */
+  folder: z.string().max(4096).optional(),
   nodes: z.array(ContextNodeSchema),
   edges: z.array(ContextEdgeSchema),
   showExternalLinks: z.boolean().optional(),

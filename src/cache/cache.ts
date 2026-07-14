@@ -224,6 +224,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function cachePathForStorage(storageUriFsPath: string): string {
-  return join(storageUriFsPath, `index-cache-v${CACHE_SCHEMA}.json`);
+export function cachePathForStorage(storageUriFsPath: string, folderKey?: string): string {
+  const suffix = folderKey ? `-${folderKey}` : "";
+  return join(storageUriFsPath, `index-cache-v${CACHE_SCHEMA}${suffix}.json`);
 }

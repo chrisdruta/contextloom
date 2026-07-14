@@ -8,7 +8,7 @@ import { SettingsService } from "../settings/service";
 import { normalizeWorkspaceRelativePath } from "../shared/paths";
 import type { ParserDiagnostic } from "../shared/types";
 import { LoomPanel } from "../webview/panel";
-import { IndexerService } from "./indexer";
+import { IndexerRegistry } from "./indexer-registry";
 import {
   AgentsSkillsProvider,
   GraphOutlineProvider,
@@ -16,25 +16,34 @@ import {
   LooseThreadsProvider,
 } from "./views";
 
-let indexer: IndexerService | undefined;
+let registry: IndexerRegistry | undefined;
 let statusBar: vscode.StatusBarItem | undefined;
 
 /** Internal API returned from activate() — used by integration tests. Unstable. */
 export interface ContextLoomTestApi {
-  openRoot(root: string): Promise<void>;
+  openRoot(root: string, folderName?: string): Promise<void>;
   reindexAndWait(): Promise<void>;
   getStore(): GraphStore | null;
   exportJson(): string | null;
   search(query: string): string[];
   getDiagnostics(): ParserDiagnostic[];
   resolveContext(filePath: string): ScopeMatchGroup[];
-  onDidUpdate: IndexerService["onDidUpdate"];
+  onDidUpdate: IndexerRegistry["onDidUpdate"];
+}
+
+function findFolder(ref?: string): vscode.WorkspaceFolder | undefined {
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  if (ref) {
+    return folders.find((f) => f.uri.toString() === ref || f.name === ref);
+  }
+  return folders.length === 1 ? folders[0] : undefined;
 }
 
 export function activate(context: vscode.ExtensionContext): ContextLoomTestApi {
   const settings = new SettingsService();
   const diagnostics = new DiagnosticsPublisher();
-  indexer = new IndexerService(context, settings, diagnostics);
+  registry = new IndexerRegistry(context, settings, diagnostics);
+  const reg = registry;
 
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   statusBar.command = "contextloom.openGraph";
@@ -43,129 +52,155 @@ export function activate(context: vscode.ExtensionContext): ContextLoomTestApi {
   statusBar.show();
 
   const rootsProvider = new GraphRootsProvider(() => settings.settings.roots);
-  const looseProvider = new LooseThreadsProvider(indexer);
-  const outlineProvider = new GraphOutlineProvider(indexer);
-  const agentsProvider = new AgentsSkillsProvider(indexer);
+  const looseProvider = new LooseThreadsProvider(reg);
+  const outlineProvider = new GraphOutlineProvider(reg);
+  const agentsProvider = new AgentsSkillsProvider(reg);
 
   context.subscriptions.push(
     settings,
     diagnostics,
-    indexer,
+    reg,
     statusBar,
     vscode.window.registerTreeDataProvider("contextloom.graphRoots", rootsProvider),
     vscode.window.registerTreeDataProvider("contextloom.looseThreads", looseProvider),
     vscode.window.registerTreeDataProvider("contextloom.agentsSkills", agentsProvider),
     vscode.window.registerTreeDataProvider("contextloom.graphOutline", outlineProvider),
+    vscode.workspace.onDidChangeWorkspaceFolders((e) => {
+      reg.removeFolders(e.removed);
+      rootsProvider.refresh();
+    }),
   );
 
-  indexer.onDidStateChange((s) => {
+  reg.onDidStateChange((s) => {
     if (!statusBar) return;
+    const folderTag =
+      (vscode.workspace.workspaceFolders?.length ?? 0) > 1 && reg.workspaceFolder
+        ? ` [${reg.workspaceFolder.name}]`
+        : "";
     if (s.state === "indexing") {
       statusBar.text = "$(sync~spin) ContextLoom indexing…";
     } else if (s.state === "ready") {
-      statusBar.text = `$(check) ContextLoom ${s.nodeCount ?? 0} nodes`;
+      statusBar.text = `$(check) ContextLoom ${s.nodeCount ?? 0} nodes${folderTag}`;
     } else if (s.state === "degraded") {
       statusBar.text = `$(warning) ContextLoom ${s.message ?? "degraded"}`;
     } else if (s.state === "error") {
       statusBar.text = "$(error) ContextLoom";
       statusBar.tooltip = s.message;
+    } else {
+      statusBar.text = "$(type-hierarchy) ContextLoom";
     }
   });
 
-  const openGraph = async (rootArg?: string) => {
+  /** Open (or switch to) a graph for a root inside a workspace folder. */
+  const openGraph = async (rootArg?: string, folderRef?: string) => {
+    let folder = findFolder(typeof folderRef === "string" ? folderRef : undefined);
+    if (!folder) {
+      folder = await vscode.window.showWorkspaceFolderPick({
+        placeHolder: "Workspace folder to open a graph for",
+      });
+      if (!folder) return;
+    }
     const root = normalizeWorkspaceRelativePath(typeof rootArg === "string" ? rootArg : "");
     if (root === null) {
       void vscode.window.showErrorMessage("ContextLoom graph roots must be inside the workspace.");
       return;
     }
-    rootsProvider.addAdHoc(root);
-    LoomPanel.show(context.extensionUri, indexer!, settings);
-    await indexer!.openRoot(root);
+    const indexer = reg.getOrCreate(folder);
+    reg.setActive(indexer);
+    rootsProvider.addAdHoc(root, folder.uri.toString());
+    LoomPanel.show(context.extensionUri, reg, settings);
+    await indexer.openRoot(root);
+  };
+
+  /** Ensure the folder owning `uri` is indexed and active; return its rel path. */
+  const activateFolderFor = async (uri: vscode.Uri): Promise<string | undefined> => {
+    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    if (!folder) return undefined;
+    const indexer = reg.getOrCreate(folder);
+    reg.setActive(indexer);
+    if (!indexer.store) {
+      LoomPanel.show(context.extensionUri, reg, settings);
+      await indexer.openRoot("");
+    } else {
+      LoomPanel.show(context.extensionUri, reg, settings);
+    }
+    return vscode.workspace.asRelativePath(uri, false).replace(/\\/g, "/");
   };
 
   context.subscriptions.push(
     vscode.commands.registerCommand("contextloom.openGraph", openGraph),
 
     vscode.commands.registerCommand("contextloom.openGraphForFolder", async (uri?: vscode.Uri) => {
-      const folder = vscode.workspace.workspaceFolders?.[0];
-      if (!folder) {
+      if (!vscode.workspace.workspaceFolders?.length) {
         void vscode.window.showErrorMessage("Open a workspace folder first.");
         return;
       }
-      let root = "";
       if (uri) {
-        root = vscode.workspace.asRelativePath(uri, false);
+        const folder = vscode.workspace.getWorkspaceFolder(uri);
+        if (!folder) return;
+        let root = vscode.workspace.asRelativePath(uri, false);
         if (root === uri.fsPath) root = "";
-      } else {
-        const picked = await vscode.window.showOpenDialog({
-          canSelectFolders: true,
-          canSelectFiles: false,
-          canSelectMany: false,
-          openLabel: "Open Graph for Folder",
-          defaultUri: folder.uri,
-        });
-        if (!picked?.[0]) return;
-        root = vscode.workspace.asRelativePath(picked[0], false);
-        if (root === picked[0].fsPath) root = "";
+        await openGraph(root, folder.uri.toString());
+        return;
       }
-      await openGraph(root);
+      const picked = await vscode.window.showOpenDialog({
+        canSelectFolders: true,
+        canSelectFiles: false,
+        canSelectMany: false,
+        openLabel: "Open Graph for Folder",
+        defaultUri: vscode.workspace.workspaceFolders[0]!.uri,
+      });
+      if (!picked?.[0]) return;
+      const folder = vscode.workspace.getWorkspaceFolder(picked[0]);
+      if (!folder) {
+        void vscode.window.showErrorMessage("The folder must be inside the workspace.");
+        return;
+      }
+      let root = vscode.workspace.asRelativePath(picked[0], false);
+      if (root === picked[0].fsPath) root = "";
+      await openGraph(root, folder.uri.toString());
     }),
 
     vscode.commands.registerCommand("contextloom.focusCurrentFile", async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
-      const rel = vscode.workspace.asRelativePath(editor.document.uri, false);
-      if (!indexer!.store) {
-        await openGraph("");
-      } else {
-        LoomPanel.show(context.extensionUri, indexer!, settings);
-      }
-      const nodeId = `file:${rel.replace(/\\/g, "/")}`;
-      LoomPanel.current?.focusNode(nodeId);
+      const rel = await activateFolderFor(editor.document.uri);
+      if (!rel) return;
+      LoomPanel.current?.focusNode(`file:${rel}`);
     }),
 
     vscode.commands.registerCommand("contextloom.showAgentContext", async (arg?: unknown) => {
       // Subject: explorer Uri arg > active editor. Any file is a valid
       // subject — a .ts source is the canonical case (stories 7/8).
-      let rel: string | undefined;
-      if (arg instanceof vscode.Uri) {
-        const candidate = vscode.workspace.asRelativePath(arg, false);
-        if (candidate !== arg.fsPath) rel = candidate;
-      } else {
-        const editor = vscode.window.activeTextEditor;
-        if (editor) {
-          const candidate = vscode.workspace.asRelativePath(editor.document.uri, false);
-          if (candidate !== editor.document.uri.fsPath) rel = candidate;
-        }
+      const uri = arg instanceof vscode.Uri ? arg : vscode.window.activeTextEditor?.document.uri;
+      if (!uri) {
+        void vscode.window.showInformationMessage(
+          "Open a workspace file to see its agent context.",
+        );
+        return;
       }
+      const rel = await activateFolderFor(uri);
       if (!rel) {
         void vscode.window.showInformationMessage(
           "Open a workspace file to see its agent context.",
         );
         return;
       }
-      rel = rel.replace(/\\/g, "/");
-
-      if (!indexer!.store) {
-        await openGraph("");
-      } else {
-        LoomPanel.show(context.extensionUri, indexer!, settings);
-      }
       const nodeId = `file:${rel}`;
-      if (indexer!.store?.hasNode(nodeId)) {
+      if (reg.store?.hasNode(nodeId)) {
         LoomPanel.current?.focusNode(nodeId);
       }
       LoomPanel.current?.showAgentContext(rel);
     }),
 
     vscode.commands.registerCommand("contextloom.findLooseThreads", async () => {
-      if (!indexer!.store) await openGraph("");
+      if (!reg.store) await openGraph("");
       looseProvider.refresh();
       await vscode.commands.executeCommand("contextloom.looseThreads.focus");
     }),
 
     vscode.commands.registerCommand("contextloom.refreshGraph", async () => {
-      await indexer!.reindex("Manual refresh");
+      await reg.reindex("Manual refresh");
       rootsProvider.refresh();
       looseProvider.refresh();
     }),
@@ -175,12 +210,12 @@ export function activate(context: vscode.ExtensionContext): ContextLoomTestApi {
         void vscode.window.showWarningMessage("Export is disabled in untrusted workspaces.");
         return;
       }
-      if (!indexer!.store) {
+      if (!reg.store) {
         await openGraph("");
       }
-      const store = indexer!.store;
+      const store = reg.store;
       if (!store) return;
-      const json = exportGraphJson(store, indexer!.currentRoot);
+      const json = exportGraphJson(store, reg.currentRoot);
       const uri = await vscode.window.showSaveDialog({
         filters: { JSON: ["json"] },
         saveLabel: "Export Graph",
@@ -192,38 +227,48 @@ export function activate(context: vscode.ExtensionContext): ContextLoomTestApi {
     }),
 
     vscode.commands.registerCommand("contextloom._revealNode", (nodeId: string) => {
-      LoomPanel.show(context.extensionUri, indexer!, settings);
+      LoomPanel.show(context.extensionUri, reg, settings);
       LoomPanel.current?.focusNode(nodeId);
     }),
 
     vscode.window.registerWebviewPanelSerializer(LoomPanel.viewType, {
       deserializeWebviewPanel: async (panel: vscode.WebviewPanel, state: unknown) => {
-        LoomPanel.revive(panel, context.extensionUri, indexer!, settings);
-        const stored = (state ?? {}) as { root?: unknown };
+        LoomPanel.revive(panel, context.extensionUri, reg, settings);
+        const stored = (state ?? {}) as { root?: unknown; folder?: unknown };
+        const folder =
+          findFolder(typeof stored.folder === "string" ? stored.folder : undefined) ??
+          vscode.workspace.workspaceFolders?.[0];
+        if (!folder) return;
+        const indexer = reg.getOrCreate(folder);
+        reg.setActive(indexer);
         const root = normalizeWorkspaceRelativePath(
           typeof stored.root === "string" ? stored.root : "",
         );
-        await indexer!.openRoot(root ?? "");
+        await indexer.openRoot(root ?? "");
       },
     }),
   );
 
   const api: ContextLoomTestApi = {
-    openRoot: (root) => indexer!.openRoot(root),
-    reindexAndWait: () => indexer!.reindex("test"),
-    getStore: () => indexer!.store,
-    exportJson: () =>
-      indexer!.store ? exportGraphJson(indexer!.store, indexer!.currentRoot) : null,
-    search: (query) => indexer!.search(query),
-    getDiagnostics: () => indexer!.diagnosticsList,
-    resolveContext: (filePath) =>
-      indexer!.scopeIndex ? resolveContext(filePath, indexer!.scopeIndex) : [],
-    onDidUpdate: indexer.onDidUpdate,
+    openRoot: async (root, folderName) => {
+      const folder = findFolder(folderName) ?? vscode.workspace.workspaceFolders?.[0];
+      if (!folder) throw new Error("no workspace folder");
+      const indexer = reg.getOrCreate(folder);
+      reg.setActive(indexer);
+      await indexer.openRoot(root);
+    },
+    reindexAndWait: () => reg.reindex("test"),
+    getStore: () => reg.store,
+    exportJson: () => (reg.store ? exportGraphJson(reg.store, reg.currentRoot) : null),
+    search: (query) => reg.search(query),
+    getDiagnostics: () => reg.diagnosticsList,
+    resolveContext: (filePath) => (reg.scopeIndex ? resolveContext(filePath, reg.scopeIndex) : []),
+    onDidUpdate: reg.onDidUpdate,
   };
   return api;
 }
 
 export function deactivate(): void {
-  indexer?.dispose();
-  indexer = undefined;
+  registry?.dispose();
+  registry = undefined;
 }
