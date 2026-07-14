@@ -77,6 +77,24 @@ Conflicts are **reported, never resolved**. When multiple same-format sources ar
 | `contextloom.agents.agentsMdMode` | `"nearest"` | `nearest` (spec) vs `merge` (Cursor/VS Code consumers) — query-time only, never invalidates the cache |
 | `contextloom.agents.formats` | `["agents-md", "claude", "cursor"]` | Enabled format adapters |
 
+## Oracle validation (G.5)
+
+The resolver was validated against **real Claude Code** (CLI 2.1.197, July 2026) with `scripts/oracle-validation.ts` — a marker fixture is probed headless from three working directories and the loaded-marker set compared with `resolveContext` output. Requires an authenticated `claude` CLI; run manually, never in CI.
+
+Verified agreements:
+
+- Ancestor CLAUDE.md files **concatenate root→leaf** (both load; neither overrides).
+- Descendant CLAUDE.md files **lazy-load** — absent from the initial context.
+- Sibling-directory CLAUDE.md files do not load.
+- `AGENTS.md` is **not read natively** by Claude Code.
+
+Verified divergences (encoded as UI caveats, not resolver changes):
+
+- **`@imports` expand only in the CLAUDE.md nearest the session cwd**; ancestor files load *unexpanded*. The resolver claims expansions for every ancestor (it cannot know a future session's cwd), and the Agent Context group note states this nuance whenever expansions are shown.
+- PLAN §G.5 proposed the `InstructionsLoaded` hook event as the oracle; **that event does not exist** in current Claude Code — the marker-probe method replaces it.
+
+Unvalidated (probes read no files): whether `.claude/rules` glob activation and descendant lazy-loads expand their own imports.
+
 ## Fixture matrix
 
 The PLAN.md §G.3 worked example is a literal fixture (`test/fixtures/scope-monorepo/`) asserted row-by-row in `test/scope-resolve.test.ts`, in both `nearest` and `merge` modes. `@import` depth/cycle cases live in `test/fixtures/claude-imports/`, `.claude/` artifacts in `test/fixtures/claude-dir/`, and Cursor modes in `test/fixtures/cursor-rules/`.

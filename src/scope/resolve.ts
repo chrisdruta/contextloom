@@ -44,8 +44,15 @@ function groupNote(
   const active = matches.filter((m) => m.status === "active").length;
   if (active <= 1) return undefined;
   switch (format) {
-    case "claude-md":
-      return "All files load, concatenated root→leaf — later files never override earlier ones.";
+    case "claude-md": {
+      const base =
+        "All files load, concatenated root→leaf — later files never override earlier ones.";
+      // Oracle-verified vs Claude Code 2.1.x (scripts/oracle-validation.ts):
+      // @imports expand only in the CLAUDE.md nearest the session cwd.
+      return matches.some((m) => m.via)
+        ? `${base} @imports expand only for the CLAUDE.md nearest Claude Code's working directory; ancestor files load unexpanded.`
+        : base;
+    }
     case "agents-md":
       return "Merge mode: all files apply root→leaf (Cursor/VS Code semantics; the agents.md spec itself is nearest-wins).";
     case "cursor":
