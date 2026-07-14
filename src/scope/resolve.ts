@@ -41,17 +41,19 @@ function groupNote(
   format: ScopeMatchGroup["format"],
   matches: ScopeMatchGroup["matches"],
 ): string | undefined {
+  // Oracle-verified vs Claude Code 2.1.x (scripts/oracle-validation.ts):
+  // @imports expand only in the CLAUDE.md located at the session cwd, so the
+  // hint matters even for a single-file group.
+  const importNote = matches.some((m) => m.via)
+    ? "@imports are cwd-dependent: Claude Code only expands imports in the CLAUDE.md located at its working directory — other files load unexpanded."
+    : undefined;
   const active = matches.filter((m) => m.status === "active").length;
-  if (active <= 1) return undefined;
+  if (active <= 1) return importNote;
   switch (format) {
     case "claude-md": {
       const base =
         "All files load, concatenated root→leaf — later files never override earlier ones.";
-      // Oracle-verified vs Claude Code 2.1.x (scripts/oracle-validation.ts):
-      // @imports expand only in the CLAUDE.md nearest the session cwd.
-      return matches.some((m) => m.via)
-        ? `${base} @imports expand only for the CLAUDE.md nearest Claude Code's working directory; ancestor files load unexpanded.`
-        : base;
+      return importNote ? `${base} ${importNote}` : base;
     }
     case "agents-md":
       return "Merge mode: all files apply root→leaf (Cursor/VS Code semantics; the agents.md spec itself is nearest-wins).";

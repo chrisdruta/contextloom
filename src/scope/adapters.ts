@@ -18,6 +18,11 @@ function join(dir: string, name: string): string {
   return dir === "" ? name : `${dir}/${name}`;
 }
 
+function dirOf(path: string): string {
+  const segments = normalizePath(path).split("/");
+  return segments.slice(0, -1).join("/");
+}
+
 /** Path relative to root, or null when the file is not under it ("" = whole workspace). */
 function relativeTo(path: string, root: string): string | null {
   if (root === "") return path;
@@ -130,14 +135,18 @@ export const claudeMdAdapter: FormatAdapter = {
       });
       for (const exp of index.importChains.get(path) ?? []) {
         rank++;
+        // Oracle-verified (scripts/oracle-validation.ts, Claude Code 2.1.x):
+        // @imports expand only in the CLAUDE.md located at the session cwd,
+        // so an expansion can never be claimed unconditionally active.
+        const importerDir = dirOf(exp.via);
         matches.push({
           source: fileId(exp.path),
           sourcePath: exp.path,
           format: "claude-md",
           mechanism: "ancestry",
-          status: "active",
+          status: "conditional",
           rank,
-          reason: `imported by ${exp.via} (@import, depth ${exp.depth})`,
+          reason: `imported by ${exp.via} (@import, depth ${exp.depth}) — loads only when the session runs from ${importerDir === "" ? "the repo root" : `${importerDir}/`}`,
           confidence: 1,
           via: { importedFrom: exp.via, depth: exp.depth },
         });

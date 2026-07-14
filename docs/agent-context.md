@@ -26,6 +26,8 @@ Plain Markdown, placeable in any directory. Per the agents.md spec, **the neares
 
 `@path` imports are expanded recursively through any imported file, with Claude Code's documented **depth limit of 4** and cycle detection — violations are Problems-panel **errors** (`import-depth`, `import-cycle`), and offending imports are excluded from the resolved context (shown in the graph, never claimed active). Imports inside code fences and inline code spans are ignored. Expansions inherit their importer's rank and carry `via` provenance (importing file + depth).
 
+**Expansions are `conditional`, not `active`** — oracle validation showed Claude Code only expands imports in the CLAUDE.md **located at the session's working directory**; ancestor (and even cwd-nearest) files load unexpanded. Each expansion row states the directory a session must run from for that import to load, and the group note repeats the rule. This is also a lint-worthy insight for repo authors: `@imports` in a root CLAUDE.md are silently dead for anyone launching Claude Code from a subdirectory.
+
 Only repository-local files are indexed; the user-global `~/.claude` and managed layers are out of scope.
 
 ### `.claude/` directory (`claude-rules`, `claude-skills`)
@@ -88,9 +90,10 @@ Verified agreements:
 - Sibling-directory CLAUDE.md files do not load.
 - `AGENTS.md` is **not read natively** by Claude Code.
 
-Verified divergences (encoded as UI caveats, not resolver changes):
+Verified divergences (encoded in the resolver and UI):
 
-- **`@imports` expand only in the CLAUDE.md nearest the session cwd**; ancestor files load *unexpanded*. The resolver claims expansions for every ancestor (it cannot know a future session's cwd), and the Agent Context group note states this nuance whenever expansions are shown.
+- **`@imports` expand only in the CLAUDE.md located exactly at the session cwd** — ancestor files, and even the cwd-*nearest* file when no CLAUDE.md sits in the cwd itself, load *unexpanded*. The resolver therefore reports expansions as `conditional` with the required working directory in the reason, and the group note states the rule.
+- **`@AGENTS.md` interop works**: a CLAUDE.md importing `@AGENTS.md` does load the AGENTS.md content into Claude Code's context (when the cwd rule above is satisfied) — the documented interop pattern for sharing one instruction file across Claude Code and AGENTS.md-native tools (Codex, Cursor, …).
 - PLAN §G.5 proposed the `InstructionsLoaded` hook event as the oracle; **that event does not exist** in current Claude Code — the marker-probe method replaces it.
 
 Unvalidated (probes read no files): whether `.claude/rules` glob activation and descendant lazy-loads expand their own imports.

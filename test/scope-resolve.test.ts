@@ -117,6 +117,53 @@ describe("resolveContext — @import expansions", () => {
     expect(claude.matches[1]!.via).toEqual({ importedFrom: "CLAUDE.md", depth: 1 });
     expect(claude.matches[1]!.reason).toContain("imported by CLAUDE.md");
   });
+
+  it("expansions are conditional with the required cwd in the reason (oracle-verified)", () => {
+    const result = buildGraph({
+      workspaceRoot: fixturePath("nested-claude-md"),
+      graphRoot: "",
+      settings: defaultSettings(),
+      registry: new ParserRegistry(),
+    });
+    const claude = group(
+      resolveContext("packages/api/anything.ts", result.scopeIndex),
+      "claude-md",
+    )!;
+    const expansion = claude.matches.find((m) => m.via)!;
+    expect(expansion.status).toBe("conditional");
+    expect(expansion.reason).toContain("loads only when the session runs from the repo root");
+    expect(claude.note).toContain("cwd-dependent");
+  });
+
+  it("@AGENTS.md interop: one shared file serves Claude and AGENTS.md-native tools", () => {
+    const result = buildGraph({
+      workspaceRoot: fixturePath("claude-imports/interop"),
+      graphRoot: "",
+      settings: defaultSettings(),
+      registry: new ParserRegistry(),
+    });
+    const groups = resolveContext("src/index.ts", result.scopeIndex);
+
+    // Codex/Cursor-family read AGENTS.md directly
+    const agents = group(groups, "agents-md")!;
+    expect(agents.matches[0]).toMatchObject({ sourcePath: "AGENTS.md", status: "active" });
+
+    // Claude Code reaches the same file via the @AGENTS.md import (cwd-conditional)
+    const claude = group(groups, "claude-md")!;
+    expect(claude.matches.map((m) => [m.sourcePath, m.status])).toEqual([
+      ["CLAUDE.md", "active"],
+      ["AGENTS.md", "conditional"],
+    ]);
+    expect(claude.matches[1]!.via).toEqual({ importedFrom: "CLAUDE.md", depth: 1 });
+
+    // Generic skill docs hang off AGENTS.md as ordinary links — visible to both
+    const skillLinks = result.store
+      .outgoing("file:AGENTS.md")
+      .filter((e) => e.type === "link")
+      .map((e) => e.target)
+      .sort();
+    expect(skillLinks).toEqual(["file:skills/deploy.md", "file:skills/review.md"]);
+  });
 });
 
 describe("filesInScope — reverse lookup", () => {
