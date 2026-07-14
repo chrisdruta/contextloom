@@ -6,7 +6,7 @@
 import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
 import fcose from "cytoscape-fcose";
 import { SEMANTIC_EDGE_TYPES, edgeColor, edgeLineStyle, nodeColor, nodeShape } from "./node-style";
-import type { FilterState, GraphEdge, GraphNode } from "./protocol";
+import type { FilterState, GraphEdge, GraphLayout, GraphNode } from "./protocol";
 import type { ContextHighlight, GraphPatchView, GraphRenderer } from "./renderer";
 
 cytoscape.use(fcose);
@@ -52,6 +52,7 @@ export class CytoscapeRenderer implements GraphRenderer {
   private cy?: Core;
   private nodesById = new Map<string, GraphNode>();
   private filters: FilterState = DEFAULT_FILTERS;
+  private layoutKind: GraphLayout = "fcose";
   private selectHandler?: (sel: { nodeId?: string; edgeId?: string }) => void;
   private openHandler?: (node: GraphNode) => void;
   private ro?: ResizeObserver;
@@ -293,6 +294,11 @@ export class CytoscapeRenderer implements GraphRenderer {
       if (removed) cy.trigger("render");
       return;
     }
+    if (this.layoutKind !== "fcose") {
+      // Discrete layouts (hierarchy/concentric/grid) are cheap — re-run whole.
+      this.runLayout(false);
+      return;
+    }
     if (newNodeIds.length <= SMALL_PATCH && affectedIds.length <= SMALL_PATCH * 4) {
       const affected = cy.collection();
       for (const id of new Set(affectedIds)) {
@@ -323,6 +329,12 @@ export class CytoscapeRenderer implements GraphRenderer {
     const cy = this.cy;
     if (!cy) return;
     cy.batch(() => this.applyFilterClasses());
+  }
+
+  setLayout(layout: GraphLayout): void {
+    if (this.layoutKind === layout) return;
+    this.layoutKind = layout;
+    if ((this.cy?.nodes().length ?? 0) > 0) this.runLayout(true);
   }
 
   /**
@@ -445,6 +457,26 @@ export class CytoscapeRenderer implements GraphRenderer {
         cy.center(visible);
       }
     };
+
+    // User-selected discrete layouts (PLAN H.2). "hierarchy" reads the link
+    // structure as a directed tree via breadthfirst; roots are auto-detected.
+    if (this.layoutKind !== "fcose") {
+      const opts: Record<string, unknown> =
+        this.layoutKind === "hierarchy"
+          ? { name: "breadthfirst", directed: true, spacingFactor: 1.3, avoidOverlap: true }
+          : this.layoutKind === "concentric"
+            ? { name: "concentric", minNodeSpacing: 24, avoidOverlap: true }
+            : { name: "grid", avoidOverlap: true, spacingFactor: 1.2 };
+      const layout = visible.layout({
+        ...opts,
+        animate: !this.reducedMotion,
+        animationDuration: 300,
+        fit: false,
+      } as Parameters<typeof visible.layout>[0]);
+      if (fresh) layout.one("layoutstop", fitAndClamp);
+      layout.run();
+      return;
+    }
 
     // ADR-001 bake-off: full fcose is ~0.4 s at 500 nodes but ~5 s at 2k and
     // ~33 s at 5k. Above the threshold fall back to concentric (11-40 ms

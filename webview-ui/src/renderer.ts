@@ -4,7 +4,7 @@
  */
 import { CytoscapeRenderer } from "./cytoscape-renderer";
 import { edgeColor as sharedEdgeColor, nodeColor as sharedNodeColor } from "./node-style";
-import type { FilterState, GraphEdge, GraphNode } from "./protocol";
+import type { FilterState, GraphEdge, GraphLayout, GraphNode } from "./protocol";
 
 export interface GraphPatchView {
   addedNodes: GraphNode[];
@@ -27,6 +27,8 @@ export interface GraphRenderer {
   setGraph(nodes: GraphNode[], edges: GraphEdge[]): void;
   applyPatch(patch: GraphPatchView): void;
   setFilters(filters: FilterState): void;
+  /** Switch the layout algorithm and re-lay out (no-op for force-only renderers). */
+  setLayout(layout: GraphLayout): void;
   focusNode(nodeId: string): void;
   /** Transient decoration only — never persisted, never part of exports. */
   setContextHighlight(highlight: ContextHighlight | null): void;
@@ -70,6 +72,13 @@ export class NullRenderer implements GraphRenderer {
   }
 
   setFilters(_filters: FilterState): void {}
+
+  /** Recorded for seam tests. */
+  lastLayout: GraphLayout = "fcose";
+
+  setLayout(layout: GraphLayout): void {
+    this.lastLayout = layout;
+  }
 
   setContextHighlight(highlight: ContextHighlight | null): void {
     this.lastContextHighlight = highlight;
@@ -233,6 +242,10 @@ export class CanvasRenderer implements GraphRenderer {
   setFilters(filters: FilterState): void {
     this.filters = filters;
     this.draw();
+  }
+
+  setLayout(_layout: GraphLayout): void {
+    // Force-simulation only — the canvas fallback has no discrete layouts.
   }
 
   setContextHighlight(highlight: ContextHighlight | null): void {

@@ -6,6 +6,7 @@ import {
   type ContextDetails,
   ContextDetailsPayload,
   type FilterState,
+  type GraphLayout,
   GraphPatchPayload,
   GraphSnapshotPayload,
   GraphStatusPayload,
@@ -64,6 +65,7 @@ export function App() {
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>(
     () => vscode.getState()?.inspectorTab ?? "details",
   );
+  const [layout, setLayout] = useState<GraphLayout>(() => vscode.getState()?.layout ?? "fcose");
   const [seenTypes, setSeenTypes] = useState<Set<string>>(() => new Set());
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -94,12 +96,20 @@ export function App() {
     persistState({ inspectorTab: tab });
   }, []);
 
+  const selectLayout = useCallback((next: GraphLayout) => {
+    setLayout(next);
+    rendererRef.current?.setLayout(next);
+    persistState({ layout: next });
+  }, []);
+
   useEffect(() => {
     if (!hostRef.current) return;
     const renderer = createRenderer(rendererKindFromDom());
     rendererRef.current = renderer;
     renderer.mount(hostRef.current);
     renderer.setFilters(vscode.getState()?.filters ?? DEFAULT_FILTERS);
+    const savedLayout = vscode.getState()?.layout;
+    if (savedLayout) renderer.setLayout(savedLayout);
 
     renderer.onSelect((sel) => {
       if (sel.nodeId) {
@@ -332,6 +342,18 @@ export function App() {
             external
           </button>
         </fieldset>
+        <select
+          class="layout-select"
+          aria-label="Graph layout"
+          title="Graph layout"
+          value={layout}
+          onChange={(e) => selectLayout((e.target as HTMLSelectElement).value as GraphLayout)}
+        >
+          <option value="fcose">Layout: organic</option>
+          <option value="hierarchy">Layout: hierarchy</option>
+          <option value="concentric">Layout: concentric</option>
+          <option value="grid">Layout: grid</option>
+        </select>
         <div class="actions">
           <button
             type="button"

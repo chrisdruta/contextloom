@@ -25,6 +25,11 @@ export const css = `
   border-radius:999px; padding:2px 8px; font-size:11px; cursor:pointer;
 }
 .chip.off { opacity:0.45; text-decoration: line-through; }
+.layout-select {
+  background: var(--input-bg); color: var(--input-fg);
+  border:1px solid var(--border); border-radius:4px; padding:3px 6px;
+  font: inherit; font-size:11px;
+}
 .actions { display:flex; gap:4px; }
 .btn {
   background: var(--button-bg); color: var(--button-fg);

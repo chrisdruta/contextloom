@@ -170,19 +170,28 @@ export function activate(context: vscode.ExtensionContext): ContextLoomTestApi {
     }),
 
     vscode.commands.registerCommand("contextloom.showAgentContext", async (arg?: unknown) => {
-      // Subject: explorer Uri arg > active editor. Any file is a valid
-      // subject — a .ts source is the canonical case (stories 7/8).
-      const uri = arg instanceof vscode.Uri ? arg : vscode.window.activeTextEditor?.document.uri;
-      if (!uri) {
-        void vscode.window.showInformationMessage(
-          "Open a workspace file to see its agent context.",
-        );
-        return;
+      // Subject: explorer Uri arg > active file editor > the node selected in
+      // the Loom view (palette invocations while the graph panel has focus
+      // leave activeTextEditor undefined). Any file is a valid subject — a
+      // .ts source is the canonical case (stories 7/8).
+      let uri: vscode.Uri | undefined;
+      if (arg instanceof vscode.Uri) {
+        uri = arg;
+      } else {
+        const editorUri = vscode.window.activeTextEditor?.document.uri;
+        if (editorUri?.scheme === "file") uri = editorUri;
       }
-      const rel = await activateFolderFor(uri);
+      if (!uri) {
+        const selectedPath = LoomPanel.current?.lastSelectedFilePath();
+        const folder = reg.workspaceFolder;
+        if (selectedPath && folder) {
+          uri = vscode.Uri.joinPath(folder.uri, ...selectedPath.split("/"));
+        }
+      }
+      const rel = uri ? await activateFolderFor(uri) : undefined;
       if (!rel) {
         void vscode.window.showInformationMessage(
-          "Open a workspace file to see its agent context.",
+          "Open a workspace file — or select a node in the Loom view — to see its agent context.",
         );
         return;
       }

@@ -39,6 +39,9 @@ export type ScopeMatchGroup = z.infer<typeof ScopeMatchGroupWire>;
 
 export type InspectorTab = "details" | "context";
 
+/** User-selectable graph layouts (PLAN H.2 "Change layout"). */
+export type GraphLayout = "fcose" | "hierarchy" | "concentric" | "grid";
+
 /** State the webview persists across VS Code restarts (panel revival). */
 export interface WebviewState {
   root?: string;
@@ -46,6 +49,7 @@ export interface WebviewState {
   folder?: string;
   filters?: FilterState;
   inspectorTab?: InspectorTab;
+  layout?: GraphLayout;
 }
 
 interface VsCodeApi {

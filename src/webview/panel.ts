@@ -33,6 +33,7 @@ export class LoomPanel {
   private readonly panel: vscode.WebviewPanel;
   private disposables: vscode.Disposable[] = [];
   private snapshotWasCapped = false;
+  private lastSelectedNodeId: string | undefined;
 
   private constructor(
     panel: vscode.WebviewPanel,
@@ -143,6 +144,12 @@ export class LoomPanel {
     this.postContext({ filePath: relPath }, undefined, true);
   }
 
+  /** Workspace-relative path of the last node selected in the graph, if file-backed. */
+  lastSelectedFilePath(): string | undefined {
+    if (!this.lastSelectedNodeId) return undefined;
+    return this.indexer.store?.getNode(this.lastSelectedNodeId)?.path;
+  }
+
   /**
    * Answer a context request. File subjects get context/details (the resolved
    * groups); instruction-family nodes additionally get context/appliesTo (the
@@ -221,6 +228,7 @@ export class LoomPanel {
       case "node/details": {
         const p = NodeDetailsPayload.safeParse(env.payload);
         if (!p.success) return;
+        if (p.data.nodeId) this.lastSelectedNodeId = p.data.nodeId;
         this.postDetails(p.data.nodeId, p.data.edgeId, env.id);
         break;
       }

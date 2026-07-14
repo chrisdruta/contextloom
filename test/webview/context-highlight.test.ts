@@ -2,6 +2,15 @@
 import { describe, expect, it } from "vitest";
 import { NullRenderer } from "../../webview-ui/src/renderer";
 
+describe("GraphRenderer.setLayout seam", () => {
+  it("NullRenderer records the layout for assertions", () => {
+    const renderer = new NullRenderer();
+    expect(renderer.lastLayout).toBe("fcose");
+    renderer.setLayout("hierarchy");
+    expect(renderer.lastLayout).toBe("hierarchy");
+  });
+});
+
 describe("GraphRenderer.setContextHighlight seam", () => {
   it("NullRenderer records the last highlight for assertions", () => {
     const renderer = new NullRenderer();
