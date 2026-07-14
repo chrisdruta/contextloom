@@ -27,11 +27,18 @@ applyStylesheet();
 
 const vscode = getVsCodeApi();
 
+// source-file (all non-markdown link targets) hidden by default — code-heavy
+// repos otherwise drown the docs graph; the chip toggles them back on.
 const DEFAULT_FILTERS: FilterState = {
-  hiddenNodeTypes: ["directory"],
+  hiddenNodeTypes: ["directory", "source-file"],
   hiddenEdgeTypes: ["contains"],
   showInferred: false,
   showExternal: false,
+};
+
+/** Friendlier chip labels where the raw node type reads poorly. */
+const CHIP_LABELS: Record<string, string> = {
+  "source-file": "non-md files",
 };
 
 function persistState(partial: WebviewState): void {
@@ -331,7 +338,7 @@ export function App() {
               title={`Toggle ${t}`}
             >
               <span class="dot" aria-hidden="true" style={{ background: nodeColor(t) }} />
-              {t}
+              {CHIP_LABELS[t] ?? t}
             </button>
           ))}
           <button

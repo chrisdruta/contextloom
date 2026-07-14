@@ -133,7 +133,7 @@ export class CanvasRenderer implements GraphRenderer {
   private edges: GraphEdge[] = [];
   private positions = new Map<string, { x: number; y: number; vx: number; vy: number }>();
   private filters: FilterState = {
-    hiddenNodeTypes: ["directory"],
+    hiddenNodeTypes: ["directory", "source-file"],
     hiddenEdgeTypes: ["contains"],
     showInferred: false,
     showExternal: false,

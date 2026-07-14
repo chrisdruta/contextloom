@@ -5,6 +5,7 @@
  */
 import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
 import fcose from "cytoscape-fcose";
+import { computeHierarchyPositions } from "./hierarchy-layout";
 import { SEMANTIC_EDGE_TYPES, edgeColor, edgeLineStyle, nodeColor, nodeShape } from "./node-style";
 import type { FilterState, GraphEdge, GraphLayout, GraphNode } from "./protocol";
 import type { ContextHighlight, GraphPatchView, GraphRenderer } from "./renderer";
@@ -42,7 +43,7 @@ function toEdgeDefinition(e: GraphEdge): ElementDefinition {
 }
 
 const DEFAULT_FILTERS: FilterState = {
-  hiddenNodeTypes: ["directory"],
+  hiddenNodeTypes: ["directory", "source-file"],
   hiddenEdgeTypes: ["contains"],
   showInferred: false,
   showExternal: false,
@@ -458,15 +459,41 @@ export class CytoscapeRenderer implements GraphRenderer {
       }
     };
 
-    // User-selected discrete layouts (PLAN H.2). "hierarchy" reads the link
-    // structure as a directed tree via breadthfirst; roots are auto-detected.
+    // User-selected discrete layouts (PLAN H.2). "hierarchy" is a custom
+    // semantic layering (instructions → agents/skills → docs by link depth →
+    // orphans) — cytoscape's breadthfirst auto-roots put most of a docs graph
+    // in layer 0 and produced one flat line.
+    if (this.layoutKind === "hierarchy") {
+      const visibleIds = new Set<string>();
+      const visibleNodes = visible.nodes();
+      for (let i = 0; i < visibleNodes.length; i++) {
+        const n = visibleNodes[i];
+        if (n) visibleIds.add(n.id());
+      }
+      const nodes = [...this.nodesById.values()].filter((n) => visibleIds.has(n.id));
+      const edges: { source: string; target: string }[] = [];
+      const visibleEdges = visible.edges();
+      for (let i = 0; i < visibleEdges.length; i++) {
+        const e = visibleEdges[i];
+        if (e) edges.push({ source: e.source().id(), target: e.target().id() });
+      }
+      const positions = computeHierarchyPositions(nodes, edges);
+      const layout = visible.layout({
+        name: "preset",
+        positions: (node: { id(): string }) => positions.get(node.id()) ?? { x: 0, y: 0 },
+        animate: !this.reducedMotion,
+        animationDuration: 300,
+        fit: false,
+      } as Parameters<typeof visible.layout>[0]);
+      if (fresh) layout.one("layoutstop", fitAndClamp);
+      layout.run();
+      return;
+    }
     if (this.layoutKind !== "fcose") {
       const opts: Record<string, unknown> =
-        this.layoutKind === "hierarchy"
-          ? { name: "breadthfirst", directed: true, spacingFactor: 1.3, avoidOverlap: true }
-          : this.layoutKind === "concentric"
-            ? { name: "concentric", minNodeSpacing: 24, avoidOverlap: true }
-            : { name: "grid", avoidOverlap: true, spacingFactor: 1.2 };
+        this.layoutKind === "concentric"
+          ? { name: "concentric", minNodeSpacing: 24, avoidOverlap: true }
+          : { name: "grid", avoidOverlap: true, spacingFactor: 1.2 };
       const layout = visible.layout({
         ...opts,
         animate: !this.reducedMotion,
